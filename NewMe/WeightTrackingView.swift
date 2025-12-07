@@ -53,38 +53,73 @@ struct WeightTrackingView: View {
                 .font(.title2)
                 .fontWeight(.bold)
             
-            if let latestEntry = viewModel.weightEntries.first {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("\(latestEntry.weight, specifier: "%.1f") kg")
-                            .font(.title)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.blue)
-                        
-                        Text("Last updated: \(latestEntry.date ?? Date(), style: .date)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+            if !viewModel.weightEntries.isEmpty {
+                let chartData = viewModel.getWeightEntriesForChart()
+
+                if !chartData.isEmpty {
+                    let currentWeight = chartData.last!
                     
-                    Spacer()
-                    
-                    if viewModel.weightEntries.count > 1 {
-                        let previousEntry = viewModel.weightEntries[1]
-                        let change = latestEntry.weight - previousEntry.weight
-                        HStack(spacing: 4) {
-                            Image(systemName: change >= 0 ? "arrow.up" : "arrow.down")
-                                .font(.caption)
-                                .foregroundColor(change >= 0 ? .red : .green)
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("\(currentWeight.weight, specifier: "%.1f") kg")
+                                .font(.title)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.blue)
                             
-                            Text("\(abs(change), specifier: "%.1f") kg")
+                            Text("Last updated: \(currentWeight.date, style: .date)")
                                 .font(.caption)
-                                .foregroundColor(change >= 0 ? .red : .green)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        if chartData.count > 1 {
+                            let startingWeight = chartData.first!
+                            let totalChange = currentWeight.weight - startingWeight.weight
+                            
+                            VStack(alignment: .trailing, spacing: 4) {
+                                // Total progress from start
+                                HStack(spacing: 4) {
+                                    Image(systemName: totalChange >= 0 ? "arrow.up" : "arrow.down")
+                                        .font(.caption)
+                                        .foregroundColor(totalChange >= 0 ? .orange : .green)
+
+                                    Text("\(totalChange >= 0 ? "+" : "")\(totalChange, specifier: "%.1f") kg")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(totalChange >= 0 ? .orange : .green)
+                                    
+                                    Text("total")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                // Recent change
+                                if chartData.count >= 2 {
+                                    let previousWeight = chartData[chartData.count - 2]
+                                    let recentChange = currentWeight.weight - previousWeight.weight
+
+                                    HStack(spacing: 4) {
+                                        Image(systemName: recentChange >= 0 ? "arrow.up" : "arrow.down")
+                                            .font(.caption2)
+                                            .foregroundColor(recentChange >= 0 ? .red : .blue)
+
+                                        Text("\(recentChange >= 0 ? "+" : "")\(recentChange, specifier: "%.1f") kg")
+                                            .font(.caption2)
+                                            .foregroundColor(recentChange >= 0 ? .red : .blue)
+
+                                        Text("recent")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
                         }
                     }
+                    .padding()
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
                 }
-                .padding()
-                .background(Color(.secondarySystemGroupedBackground))
-                .cornerRadius(12)
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "scalemass")
@@ -128,19 +163,27 @@ struct WeightTrackingView: View {
                 .fontWeight(.bold)
             
             let chartData = viewModel.getWeightEntriesForChart()
-            
-            if chartData.count >= 2 {
+
+            if chartData.count >= 1 {
                 WeightLineChart(data: chartData)
                     .frame(height: 200)
                     .background(Color(.secondarySystemGroupedBackground))
                     .cornerRadius(12)
             } else {
-                Text("Add at least 2 weight entries to see your progress chart")
-                    .foregroundColor(.secondary)
-                    .frame(height: 200)
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.systemGroupedBackground))
-                    .cornerRadius(12)
+                VStack(spacing: 16) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 48))
+                        .foregroundColor(.gray)
+
+                    Text("Add weight entries to see your progress chart")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(height: 200)
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemGroupedBackground))
+                .cornerRadius(12)
             }
         }
     }
@@ -161,7 +204,7 @@ struct WeightTrackingView: View {
                     .background(Color(.systemGroupedBackground))
                     .cornerRadius(12)
             } else {
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(Array(viewModel.weightEntries.prefix(10).enumerated()), id: \.element.id) { index, entry in
                         WeightEntryRowView(entry: entry)
                     }
@@ -287,93 +330,57 @@ struct WeightLineChart: View {
     let data: [(date: Date, weight: Double)]
     
     var body: some View {
-        GeometryReader { geometry in
-            let minWeight = data.map { $0.weight }.min() ?? 0
-            let maxWeight = data.map { $0.weight }.max() ?? 0
-            let weightRange = maxWeight - minWeight
-            let adjustedMinWeight = weightRange > 0 ? minWeight - (weightRange * 0.1) : minWeight - 5
-            let adjustedMaxWeight = weightRange > 0 ? maxWeight + (weightRange * 0.1) : maxWeight + 5
-            let adjustedRange = adjustedMaxWeight - adjustedMinWeight
-            
-            let chartHeight = geometry.size.height - 60
-            let chartWidth = geometry.size.width - 80
-            
-            ZStack {
-                // Background grid
-                VStack(spacing: 0) {
-                    ForEach(0..<5) { _ in
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.1))
-                            .frame(height: 1)
-                        Spacer()
-                    }
-                }
-                .padding(.horizontal, 40)
-                .padding(.vertical, 20)
-                
-                // Y-axis labels
-                HStack {
-                    VStack(spacing: 0) {
-                        ForEach(0..<5) { index in
-                            let value = adjustedMaxWeight - (Double(index) * adjustedRange / 4)
-                            Text("\(value, specifier: "%.0f")")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            if index < 4 { Spacer() }
-                        }
-                    }
-                    .frame(width: 30)
-                    
-                    Spacer()
-                }
-                .padding(.vertical, 20)
-                
-                // Line chart path
-                if data.count > 1 {
-                    Path { path in
-                        let points = data.enumerated().map { index, dataPoint in
-                            CGPoint(
-                                x: 40 + (CGFloat(index) / CGFloat(data.count - 1)) * chartWidth,
-                                y: 20 + (adjustedMaxWeight - dataPoint.weight) / adjustedRange * chartHeight
-                            )
-                        }
-                        
-                        if let firstPoint = points.first {
-                            path.move(to: firstPoint)
-                            for point in points.dropFirst() {
-                                path.addLine(to: point)
-                            }
-                        }
-                    }
-                    .stroke(Color.blue, lineWidth: 2)
-                    
-                    // Data points
-                    ForEach(Array(data.enumerated()), id: \.offset) { index, dataPoint in
-                        Circle()
-                            .fill(Color.blue)
-                            .frame(width: 6, height: 6)
-                            .position(
-                                x: 40 + (CGFloat(index) / CGFloat(data.count - 1)) * chartWidth,
-                                y: 20 + (adjustedMaxWeight - dataPoint.weight) / adjustedRange * chartHeight
-                            )
-                    }
-                }
-                
-                // X-axis labels
-                VStack {
-                    Spacer()
-                    HStack {
-                        ForEach(Array(data.enumerated().filter { $0.offset % max(1, data.count / 4) == 0 }), id: \.offset) { index, dataPoint in
-                            Text(DateFormatter.shortDateFormatter.string(from: dataPoint.date))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            if index < data.count - 1 { Spacer() }
-                        }
-                    }
-                    .padding(.horizontal, 40)
-                }
+        VStack(spacing: 12) {
+            // Weight range info
+            if let minWeight = data.map({$0.weight}).min(),
+               let maxWeight = data.map({$0.weight}).max() {
+                Text("Range: \(minWeight, specifier: "%.1f") - \(maxWeight, specifier: "%.1f") kg")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            
+            // Bar chart representation
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .bottom, spacing: 12) {
+                    ForEach(Array(data.enumerated()), id: \.offset) { index, entry in
+                        VStack(spacing: 6) {
+                            // Weight value
+                            Text("\(entry.weight, specifier: "%.1f")")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.blue)
+
+                            // Visual bar (height based on weight relative to range)
+                            let minWeight = data.map({$0.weight}).min() ?? 0
+                            let maxWeight = data.map({$0.weight}).max() ?? 100
+                            let range = maxWeight - minWeight
+                            let normalizedHeight: CGFloat = {
+                                if data.count == 1 {
+                                    return 60  // Fixed height for single entry
+                                } else if range > 0 {
+                                    return 20 + ((entry.weight - minWeight) / range) * 80
+                                } else {
+                                    return 50  // All entries same weight
+                                }
+                            }()
+
+                            Rectangle()
+                                .fill(Color.blue)
+                                .frame(width: 24, height: normalizedHeight)
+                                .cornerRadius(4)
+
+                            // Date
+                            Text(DateFormatter.shortDateFormatter.string(from: entry.date))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .frame(height: 120)
         }
+        .padding()
     }
 }
 

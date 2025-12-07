@@ -87,7 +87,7 @@ struct ChecklistSheetView: View {
                     Image(systemName: "clock.arrow.circlepath")
                         .foregroundColor(.orange)
                     
-                    Text("Logging missed tasks")
+                    Text("Editing previous day")
                         .font(.caption)
                         .foregroundColor(.orange)
                     
@@ -135,7 +135,7 @@ struct ChecklistSheetView: View {
                         .cornerRadius(4)
                     
                     Rectangle()
-                        .frame(width: CGFloat(summary.completed) / CGFloat(summary.total) * geometry.size.width, height: 8)
+                        .frame(width: CGFloat(summary.completed) / CGFloat(max(summary.total, 1)) * geometry.size.width, height: 8)
                         .foregroundColor(summary.completed == summary.total ? .green : .blue)
                         .cornerRadius(4)
                         .animation(.easeInOut(duration: 0.3), value: summary.completed)
@@ -175,8 +175,6 @@ struct ChecklistSheetView: View {
                     .font(.body)
                     .strikethrough(completed)
                     .foregroundColor(completed ? .secondary : .primary)
-                
-                // TODO: Add streak info or last completed
             }
             
             Spacer()
@@ -222,7 +220,7 @@ struct ChecklistSheetView: View {
             saveChanges()
             presentationMode.wrappedValue.dismiss()
         } label: {
-            Text(isRecoveryMode ? "Save Recovery Log" : "Save Changes")
+            Text(isRecoveryMode ? "Save Changes" : "Save Changes")
                 .font(.headline)
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
@@ -246,10 +244,12 @@ struct ChecklistSheetView: View {
     
     private func initializeCompletions() {
         if isRecoveryMode {
-            // Initialize all as false for recovery mode, only for applicable tasks
-            for task in viewModel.activeTasks.filter({ $0.isApplicable(for: period) }) {
+            // Prepopulate with existing completion state for the given date and period
+            let tasks = viewModel.activeTasks.filter { $0.isApplicable(for: period) }
+            for task in tasks {
                 if let id = task.id {
-                    taskCompletions[id] = false
+                    let isCompleted = task.isCompleted(for: date, period: period)
+                    taskCompletions[id] = isCompleted
                 }
             }
         }
@@ -285,6 +285,7 @@ struct ChecklistSheetView: View {
             let completedTaskIds = Set(taskCompletions.compactMap { key, value in
                 value ? key : nil
             })
+            // Overwrite that date/period to match UI state
             viewModel.logMissedTasks(for: date, period: period, completedTaskIds: completedTaskIds)
         }
     }

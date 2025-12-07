@@ -3,7 +3,9 @@
     "allow": [
       "Bash(xcodebuild:*)",
       "Bash(swift:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(swiftc:*)",
+      "Bash(timeout 30s xcodebuild:*)"
     ],
     "deny": [],
     "ask": []

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(xcodebuild:*)",
-      "Bash(swiftc:*)"
+      "Bash(swiftc:*)",
+      "Read(//Users/tom/code/apps/NewMe/**)"
     ],
     "deny": [],
     "ask": []

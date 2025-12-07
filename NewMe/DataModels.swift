@@ -141,15 +141,16 @@ enum TodoStatus: String, CaseIterable, Codable {
 // MARK: - OneOffTodo Entity Extension
 
 extension OneOffTodo {
-    convenience init(context: NSManagedObjectContext, title: String) {
+    convenience init(context: NSManagedObjectContext, title: String, dueDate: Date? = nil) {
         self.init(context: context)
         self.id = UUID()
         self.title = title
         self.created = Date()
         self.completed = false
         self.statusEnum = .pending
+        self.dueDate = dueDate
     }
-    
+
     var statusEnum: TodoStatus {
         get {
             return TodoStatus(rawValue: status ?? "pending") ?? .pending
@@ -159,6 +160,11 @@ extension OneOffTodo {
             // Update completed boolean for backward compatibility
             completed = (newValue == .completed)
         }
+    }
+
+    var isOverdue: Bool {
+        guard let dueDate = dueDate else { return false }
+        return statusEnum == .pending && dueDate < Date()
     }
 }
 
@@ -181,6 +187,7 @@ extension AppSettings {
         settings.morningReminderTime = Period.morning.defaultTime
         settings.eveningReminderTime = Period.evening.defaultTime
         settings.notificationsEnabled = true
+        settings.calendarSyncEnabled = false
         return settings
     }
 }

@@ -43,7 +43,7 @@ class NotificationManager: ObservableObject {
     }
     
     
-    // MARK: - Notification Scheduling
+    // MARK: - Notification Scheduling (Daily Habit Reminders)
     
     func scheduleHabitReminders(morningTime: Date, eveningTime: Date) {
         // Cancel existing notifications
@@ -107,6 +107,57 @@ class NotificationManager: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: ["morning-reminder", "evening-reminder"]
         )
+    }
+    
+    // MARK: - One-Off Todo Reminders
+    
+    func scheduleOneOffReminder(id: UUID, title: String, date: Date) {
+        // Normalize to 9:00 AM if date has no explicit time (00:00:00)
+        let calendar = Calendar.current
+        let comps = calendar.dateComponents([.hour, .minute, .second], from: date)
+        let hasSpecificTime = (comps.hour ?? 0) != 0 || (comps.minute ?? 0) != 0 || (comps.second ?? 0) != 0
+        
+        let scheduledDate: Date = {
+            if hasSpecificTime {
+                return date
+            } else {
+                var base = calendar.startOfDay(for: date)
+                if let nineAM = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: base) {
+                    return nineAM
+                }
+                return date
+            }
+        }()
+        
+        // Past dates should not be scheduled
+        if scheduledDate <= Date() {
+            return
+        }
+        
+        let content = UNMutableNotificationContent()
+        content.title = "Reminder"
+        content.body = title
+        content.sound = .default
+        content.categoryIdentifier = "ONE_OFF_TODO"
+        
+        let triggerDate = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: scheduledDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerDate, repeats: false)
+        
+        let request = UNNotificationRequest(
+            identifier: "todo-\(id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Failed to schedule one-off reminder: \(error)")
+            }
+        }
+    }
+    
+    func cancelOneOffReminder(id: UUID) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["todo-\(id.uuidString)"])
     }
     
     // MARK: - Recovery Banner Logic
@@ -174,6 +225,14 @@ extension NotificationManager {
             options: [.customDismissAction]
         )
         
-        UNUserNotificationCenter.current().setNotificationCategories([habitCategory])
+        // Category for one-off todos (no actions for now)
+        let todoCategory = UNNotificationCategory(
+            identifier: "ONE_OFF_TODO",
+            actions: [],
+            intentIdentifiers: [],
+            options: []
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([habitCategory, todoCategory])
     }
 }

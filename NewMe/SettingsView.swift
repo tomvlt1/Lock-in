@@ -1,4 +1,7 @@
 import SwiftUI
+import UIKit
+import EventKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var viewModel: TaskViewModel
@@ -13,18 +16,24 @@ struct SettingsView: View {
     @State private var showingArchived = false
     @State private var taskToDelete: Task?
     @State private var showingDeleteAlert = false
-    
+    @State private var showingShareSheet = false
+    @State private var csvContent = ""
+    @State private var calendarSyncEnabled = false
+
+    // Import
+    @State private var showingImportPicker = false
+    @State private var lastImportResult: String?
+
     var body: some View {
         NavigationView {
             List {
                 notificationSection
-                
+                calendarSection
                 habitManagementSection
-                
                 if !viewModel.archivedTasks.isEmpty {
                     archivedTasksSection
                 }
-                
+                dataSection
                 aboutSection
             }
             .navigationTitle("Settings")
@@ -37,7 +46,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAddTask) {
+        .sheet(isPresented: $showingAddTask, content: {
             AddTaskSheetWithPeriods(newTaskTitle: $newTaskTitle) { periods in
                 if !newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     viewModel.addTask(title: newTaskTitle, periods: periods)
@@ -45,10 +54,10 @@ struct SettingsView: View {
                 }
                 showingAddTask = false
             }
-        }
-        .sheet(isPresented: $showingArchived) {
+        })
+        .sheet(isPresented: $showingArchived, content: {
             ArchivedTasksView()
-        }
+        })
         .onAppear {
             loadCurrentSettings()
         }
@@ -67,6 +76,30 @@ struct SettingsView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingShareSheet, content: {
+            ActivityViewController(
+                activityItems: [createCSVFile()],
+                excludedActivityTypes: [.assignToContact, .addToReadingList]
+            )
+        })
+        // CSV Import picker (no Swift.Task needed; run on background queue)
+        .sheet(isPresented: $showingImportPicker, content: {
+            DocumentPicker { url in
+                guard let url = url else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let result = try viewModel.importFromCSV(url: url)
+                        DispatchQueue.main.async {
+                            lastImportResult = "Import finished: \(result)"
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            lastImportResult = "Import failed: \(error.localizedDescription)"
+                        }
+                    }
+                }
+            }
+        })
     }
     
     // MARK: - Notification Settings
@@ -81,9 +114,7 @@ struct SettingsView: View {
             if notificationsEnabled {
                 HStack {
                     Label("Morning Reminder", systemImage: "sunrise")
-                    
                     Spacer()
-                    
                     DatePicker("", selection: $morningTime, displayedComponents: .hourAndMinute)
                         .onChange(of: morningTime) { _ in
                             updateNotificationTimes()
@@ -92,9 +123,7 @@ struct SettingsView: View {
                 
                 HStack {
                     Label("Evening Reminder", systemImage: "moon")
-                    
                     Spacer()
-                    
                     DatePicker("", selection: $eveningTime, displayedComponents: .hourAndMinute)
                         .onChange(of: eveningTime) { _ in
                             updateNotificationTimes()
@@ -102,19 +131,42 @@ struct SettingsView: View {
                 }
             }
             
-            // Permission status
             HStack {
                 Text("Permission Status")
-                
                 Spacer()
-                
                 Text(permissionStatusText)
                     .foregroundColor(permissionStatusColor)
                     .font(.caption)
             }
         }
     }
-    
+
+    // MARK: - Calendar Integration
+
+    private var calendarSection: some View {
+        Section("Calendar Integration") {
+            Toggle("Sync notes to calendar", isOn: $calendarSyncEnabled)
+                .onChange(of: calendarSyncEnabled) { enabled in
+                    handleCalendarToggleChange(enabled)
+                }
+
+            HStack {
+                Text("Calendar Permission")
+                Spacer()
+                Text(calendarPermissionStatusText)
+                    .foregroundColor(calendarPermissionStatusColor)
+                    .font(.caption)
+            }
+
+            if calendarPermissionStatus == .denied {
+                Button("Open Settings") {
+                    openAppSettings()
+                }
+                .foregroundColor(.blue)
+            }
+        }
+    }
+
     // MARK: - Habit Management
     
     private var habitManagementSection: some View {
@@ -128,9 +180,7 @@ struct SettingsView: View {
             ForEach(viewModel.activeTasks, id: \.id) { task in
                 HStack {
                     Text(task.title ?? "Untitled Task")
-                    
                     Spacer()
-                    
                     Image(systemName: "ellipsis.circle")
                         .foregroundColor(.gray)
                 }
@@ -138,13 +188,10 @@ struct SettingsView: View {
                     Button("Edit") {
                         // TODO: Implement edit functionality
                     }
-                    
                     Button("Archive") {
                         viewModel.archiveTask(task)
                     }
-                    
                     Divider()
-                    
                     Button("Delete") {
                         taskToDelete = task
                         showingDeleteAlert = true
@@ -154,52 +201,73 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Archived Tasks
+    // MARK: - Archived Tasks (inline section)
     
     private var archivedTasksSection: some View {
-        Section(header: Text("")) {
+        Section("Archived Habits") {
+            ForEach(viewModel.archivedTasks, id: \.id) { task in
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(task.title ?? "Untitled Task")
+                            .font(.body)
+                        Text("Archived \(task.created ?? Date(), style: .date)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundColor(.gray)
+                }
+                .contextMenu {
+                    Button("Restore") {
+                        viewModel.unarchiveTask(task)
+                    }
+                    Divider()
+                    Button("Delete Permanently") {
+                        taskToDelete = task
+                        showingDeleteAlert = true
+                    }
+                }
+            }
+            
             Button {
                 showingArchived = true
             } label: {
-                HStack {
-                    Label("Archived Habits", systemImage: "archivebox")
-                    
-                    Spacer()
-                    
-                    Text("\(viewModel.archivedTasks.count)")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
-                    
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                        .font(.caption)
-                }
+                Label("Manage Archived...", systemImage: "tray.full")
             }
-            .foregroundColor(.primary)
         }
     }
     
-    // MARK: - About Section
+    // MARK: - Data Section (Export/Import)
     
-    private var aboutSection: some View {
-        Section("About") {
-            HStack {
-                Text("Version")
-                Spacer()
-                Text("1.0.0")
-                    .foregroundColor(.secondary)
-            }
-            
-            Link(destination: URL(string: "https://apple.com/privacy")!) {
+    private var dataSection: some View {
+        Section("Data & Export") {
+            Button {
+                exportToCSV()
+            } label: {
                 HStack {
-                    Text("Privacy Policy")
+                    Label("Export Task History", systemImage: "square.and.arrow.up")
                     Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption)
-                        .foregroundColor(.gray)
                 }
             }
-            
+            .foregroundColor(.primary)
+
+            Button {
+                showingImportPicker = true
+            } label: {
+                HStack {
+                    Label("Import from CSV", systemImage: "square.and.arrow.down")
+                    Spacer()
+                }
+            }
+            .foregroundColor(.primary)
+
+            if let lastImportResult = lastImportResult {
+                Text(lastImportResult)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             HStack {
                 Text("Data Storage")
                 Spacer()
@@ -210,6 +278,31 @@ struct SettingsView: View {
                     Text("No Cloud Sync")
                         .foregroundColor(.secondary)
                         .font(.caption2)
+                }
+            }
+        }
+    }
+    
+    // MARK: - About Section
+
+    private var aboutSection: some View {
+        Group {
+            Section("About") {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text("1.0.0")
+                        .foregroundColor(.secondary)
+                }
+
+                Link(destination: URL(string: "https://apple.com/privacy")!) {
+                    HStack {
+                        Text("Privacy Policy")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
                 }
             }
         }
@@ -248,23 +341,108 @@ struct SettingsView: View {
             return .gray
         }
     }
-    
+
+    // MARK: - Calendar Helper Properties
+
+    private var calendarPermissionStatus: EKAuthorizationStatus {
+        return EKEventStore.authorizationStatus(for: .event)
+    }
+
+    private var calendarPermissionStatusText: String {
+        switch calendarPermissionStatus {
+        case .authorized:
+            return "Authorized"
+        case .denied:
+            return "Denied"
+        case .notDetermined:
+            return "Not Set"
+        case .restricted:
+            return "Restricted"
+        @unknown default:
+            return "Unknown"
+        }
+    }
+
+    private var calendarPermissionStatusColor: Color {
+        switch calendarPermissionStatus {
+        case .authorized:
+            return .green
+        case .denied, .restricted:
+            return .red
+        case .notDetermined:
+            return .orange
+        @unknown default:
+            return .gray
+        }
+    }
+
     // MARK: - Helper Functions
     
     private func loadCurrentSettings() {
         guard let settings = viewModel.settings else { return }
-        
         morningTime = settings.morningReminderTime ?? Period.morning.defaultTime
         eveningTime = settings.eveningReminderTime ?? Period.evening.defaultTime
         notificationsEnabled = settings.notificationsEnabled
+        calendarSyncEnabled = settings.calendarSyncEnabled
     }
     
     private func updateNotificationTimes() {
         viewModel.updateNotificationTimes(morning: morningTime, evening: eveningTime)
     }
-}
 
-// MARK: - Add Task Sheet
+    private func exportToCSV() {
+        csvContent = viewModel.exportTaskHistoryToCSV()
+        if !csvContent.isEmpty {
+            showingShareSheet = true
+        }
+    }
+
+    private func createCSVFile() -> URL {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let fileName = "habit-history-\(dateFormatter.string(from: Date())).csv"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        let contentToWrite = csvContent.isEmpty ? "Date,Task,Period,Completed,Weight\nNo data available,,,,\n" : csvContent
+        try? contentToWrite.write(to: tempURL, atomically: true, encoding: .utf8)
+        return tempURL
+    }
+
+    private func handleCalendarToggleChange(_ enabled: Bool) {
+        if enabled {
+            switch calendarPermissionStatus {
+            case .authorized:
+                viewModel.updateCalendarSyncPreference(true)
+            case .notDetermined:
+                requestCalendarPermission { granted in
+                    calendarSyncEnabled = granted
+                    viewModel.updateCalendarSyncPreference(granted)
+                }
+            case .denied, .restricted:
+                calendarSyncEnabled = false
+                viewModel.updateCalendarSyncPreference(false)
+            @unknown default:
+                calendarSyncEnabled = false
+                viewModel.updateCalendarSyncPreference(false)
+            }
+        } else {
+            viewModel.updateCalendarSyncPreference(false)
+        }
+    }
+
+    private func requestCalendarPermission(completion: ((Bool) -> Void)? = nil) {
+        CalendarManager.shared.requestCalendarAccess { granted in
+            DispatchQueue.main.async {
+                completion?(granted)
+            }
+        }
+    }
+
+    private func openAppSettings() {
+        if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(settingsUrl)
+        }
+    }
+}
 
 struct AddTaskSheetWithPeriods: View {
     @Binding var newTaskTitle: String
@@ -283,7 +461,6 @@ struct AddTaskSheetWithPeriods: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Habit Name")
                         .font(.headline)
-                    
                     TextField("e.g., Drink 8 glasses of water", text: $newTaskTitle)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
@@ -294,14 +471,13 @@ struct AddTaskSheetWithPeriods: View {
                     
                     VStack(spacing: 8) {
                         PeriodSelectionRowSimple(
-                            title: "Morning", 
+                            title: "Morning",
                             subtitle: "Track this habit in the morning",
                             period: .morning,
                             selectedPeriods: $selectedPeriods
                         )
-                        
                         PeriodSelectionRowSimple(
-                            title: "Evening", 
+                            title: "Evening",
                             subtitle: "Track this habit in the evening",
                             period: .evening,
                             selectedPeriods: $selectedPeriods
@@ -320,7 +496,6 @@ struct AddTaskSheetWithPeriods: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Add") {
                         onSave(selectedPeriods)
@@ -331,8 +506,6 @@ struct AddTaskSheetWithPeriods: View {
         }
     }
 }
-
-// MARK: - Period Selection Row (Simple version for SettingsView)
 
 struct PeriodSelectionRowSimple: View {
     let title: String
@@ -356,18 +529,15 @@ struct PeriodSelectionRowSimple: View {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
                     .foregroundColor(isSelected ? .blue : .gray)
-                
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.body)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
-                    
                     Text(subtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
                 Spacer()
             }
             .padding()
@@ -377,8 +547,6 @@ struct PeriodSelectionRowSimple: View {
         .buttonStyle(PlainButtonStyle())
     }
 }
-
-// MARK: - Archived Tasks View
 
 struct ArchivedTasksView: View {
     @EnvironmentObject private var viewModel: TaskViewModel
@@ -400,14 +568,11 @@ struct ArchivedTasksView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(task.title ?? "Untitled Task")
                                     .font(.body)
-                                
                                 Text("Archived \(task.created ?? Date(), style: .date)")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
                             Spacer()
-                            
                             Image(systemName: "ellipsis.circle")
                                 .foregroundColor(.gray)
                         }
@@ -415,9 +580,7 @@ struct ArchivedTasksView: View {
                             Button("Restore") {
                                 viewModel.unarchiveTask(task)
                             }
-                            
                             Divider()
-                            
                             Button("Delete Permanently") {
                                 taskToDelete = task
                                 showingDeleteAlert = true
@@ -450,6 +613,57 @@ struct ArchivedTasksView: View {
                     taskToDelete = nil
                 }
             )
+        }
+    }
+}
+
+struct ActivityViewController: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let excludedActivityTypes: [UIActivity.ActivityType]?
+
+    init(activityItems: [Any], excludedActivityTypes: [UIActivity.ActivityType]? = nil) {
+        self.activityItems = activityItems
+        self.excludedActivityTypes = excludedActivityTypes
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let activityViewController = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: nil
+        )
+        activityViewController.excludedActivityTypes = excludedActivityTypes
+        return activityViewController
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct DocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -> Void
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.commaSeparatedText, .text, .data], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -> Void
+        init(onPick: @escaping (URL?) -> Void) {
+            self.onPick = onPick
+        }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onPick(nil)
         }
     }
 }

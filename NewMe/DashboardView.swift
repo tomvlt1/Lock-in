@@ -5,7 +5,6 @@ struct DashboardView: View {
     @EnvironmentObject private var viewModel: TaskViewModel
     @State private var showingChecklist = false
     @State private var selectedPeriod: Period = .morning
-    @State private var showingRecoveryBanner = false
     @State private var recoveryPeriod: Period?
     @State private var recoveryDate: Date?
     @State private var isShowingRecoveryChecklist = false
@@ -14,14 +13,19 @@ struct DashboardView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    recoveryBannerView
+                    // Edit Yesterday
+                    editYesterdaySection
                     
+                    // Quick actions
                     quickActionsSection
                     
+                    // Weekly + Today
                     completionChartSection
                     
+                    // 30-Day Progress
                     heatMapSection
                     
+                    // Most Skipped
                     mostSkippedSection
                 }
                 .padding()
@@ -46,49 +50,6 @@ struct DashboardView: View {
                 ChecklistSheetView(period: selectedPeriod)
             }
         }
-        .onAppear {
-            checkForRecovery()
-        }
-    }
-    
-    // MARK: - Recovery Banner
-    
-    private var recoveryBannerView: some View {
-        Group {
-            if showingRecoveryBanner,
-               let period = recoveryPeriod,
-               let _ = recoveryDate {
-                
-                Button {
-                    isShowingRecoveryChecklist = true
-                    showingChecklist = true
-                } label: {
-                    HStack {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundColor(.white)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Log missed tasks?")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                            
-                            Text("Tap to log your \(period.displayName.lowercased()) habits")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.8))
-                        }
-                        
-                        Spacer()
-                        
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.white)
-                    }
-                    .padding()
-                    .background(Color.orange)
-                    .cornerRadius(12)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
     }
     
     // MARK: - Quick Actions
@@ -108,7 +69,7 @@ struct DashboardView: View {
                 )
                 
                 quickActionButton(
-                    title: "Evening", 
+                    title: "Evening",
                     subtitle: eveningCompletionText,
                     period: .evening,
                     color: .purple
@@ -147,78 +108,95 @@ struct DashboardView: View {
         .buttonStyle(PlainButtonStyle())
     }
     
-    // MARK: - Completion Chart
+    // MARK: - Edit Yesterday
+    
+    private var editYesterdaySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit Yesterday")
+                .font(.title3)
+                .fontWeight(.semibold)
+            HStack(spacing: 12) {
+                Button {
+                    recoveryPeriod = .morning
+                    recoveryDate = Calendar.current.date(byAdding: .day, value: -1, to: Date())
+                    isShowingRecoveryChecklist = true
+                    showingChecklist = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sunrise")
+                            .foregroundColor(.blue)
+                        Text("Morning")
+                            .font(.subheadline)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Button {
+                    recoveryPeriod = .evening
+                    recoveryDate = Calendar.current.date(byAdding: .day, value: -1, to: Date())
+                    isShowingRecoveryChecklist = true
+                    showingChecklist = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "moon")
+                            .foregroundColor(.purple)
+                        Text("Evening")
+                            .font(.subheadline)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .background(Color.purple.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+    
+    // MARK: - Weekly + Today
     
     private var completionChartSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Daily Progress")
+        // Precompute outside the builder to reduce complexity
+        let chartData = viewModel.getCompletionRatesForLast30Days()
+        let weeklyData = Array(chartData.suffix(7))
+        let weeklyAverage: Double = {
+            guard !weeklyData.isEmpty else { return 0 }
+            let sum = weeklyData.map { $0.rate }.reduce(0, +)
+            return sum / Double(weeklyData.count)
+        }()
+        let todayRate: Double = chartData.last?.rate ?? 0
+        
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Weekly Progress")
                 .font(.title2)
                 .fontWeight(.bold)
             
-            let chartData = viewModel.getCompletionRatesForLast30Days()
-            let _ = viewModel.getSevenDayMovingAverage()
-            
             if !chartData.isEmpty {
-                VStack(spacing: 16) {
-                    // Weekly summary
-                    let weeklyData = Array(chartData.suffix(7))
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("This Week")
-                                .font(.headline)
-                            Text("\(Int(weeklyData.map{$0.rate}.reduce(0, +) / Double(weeklyData.count) * 100))% avg")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.blue)
-                        }
-                        
-                        Spacer()
-                        
-                        HStack(spacing: 4) {
-                            ForEach(weeklyData, id: \.date) { dataPoint in
-                                VStack {
-                                    Rectangle()
-                                        .fill(progressColor(for: dataPoint.rate))
-                                        .frame(width: 20, height: CGFloat(dataPoint.rate * 80))
-                                        .cornerRadius(2)
-                                    
-                                    Text(DateFormatter.weekdayFormatter.string(from: dataPoint.date))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
+                VStack(spacing: 12) {
+                    // Clean weekly sparkline
+                    WeeklySparkBarsView(
+                        weeklyData: weeklyData,
+                        weeklyAverage: weeklyAverage,
+                        barColor: { rate in
+                            // Softer colors for a cleaner look
+                            switch rate {
+                            case 0.8...1.0: return Color.green.opacity(0.85)
+                            case 0.5..<0.8: return Color.orange.opacity(0.85)
+                            default: return Color.red.opacity(0.85)
                             }
                         }
-                    }
-                    .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .cornerRadius(12)
+                    )
                     
-                    // Daily streak info
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("Current Streak")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("\(getCurrentStreak()) days")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                        }
-                        
-                        Spacer()
-                        
-                        VStack(alignment: .trailing) {
-                            Text("Today")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("\(Int((chartData.last?.rate ?? 0) * 100))%")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(progressColor(for: chartData.last?.rate ?? 0))
-                        }
-                    }
-                    .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .cornerRadius(12)
+                    // Today + streak compact card
+                    DailyStreakView(
+                        currentStreak: getCurrentStreak(),
+                        todayRate: todayRate,
+                        progressColor: progressColor(for:)
+                    )
                 }
             } else {
                 Text("No data available yet")
@@ -231,97 +209,37 @@ struct DashboardView: View {
         }
     }
     
-    // MARK: - Line Chart
+    // MARK: - 30-Day Progress
     
     private var heatMapSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let chartData = viewModel.getCompletionRatesForLast30Days()
+        
+        return VStack(alignment: .leading, spacing: 16) {
             Text("30-Day Progress")
                 .font(.title2)
                 .fontWeight(.bold)
             
-            let chartData = viewModel.getCompletionRatesForLast30Days()
-            
             if !chartData.isEmpty {
                 VStack(spacing: 12) {
-                    // Line chart
-                    GeometryReader { geometry in
-                        let maxRate = chartData.map { $0.rate }.max() ?? 1.0
-                        let chartHeight = geometry.size.height - 40
-                        let chartWidth = geometry.size.width - 40
-                        
-                        ZStack {
-                            // Background grid
-                            VStack(spacing: 0) {
-                                ForEach(0..<5) { _ in
-                                    Rectangle()
-                                        .fill(Color.gray.opacity(0.1))
-                                        .frame(height: 1)
-                                    Spacer()
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            
-                            // Y-axis labels
-                            HStack {
-                                VStack(spacing: 0) {
-                                    ForEach([100, 75, 50, 25, 0], id: \.self) { percentage in
-                                        Text("\(percentage)%")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        if percentage > 0 { Spacer() }
-                                    }
-                                }
-                                .frame(width: 30)
-                                
-                                Spacer()
-                            }
-                            
-                            // Line chart path
-                            Path { path in
-                                guard !chartData.isEmpty else { return }
-                                
-                                let points = chartData.enumerated().map { index, dataPoint in
-                                    CGPoint(
-                                        x: 20 + (CGFloat(index) / CGFloat(chartData.count - 1)) * chartWidth,
-                                        y: chartHeight - (CGFloat(dataPoint.rate) * chartHeight) + 20
-                                    )
-                                }
-                                
-                                if let firstPoint = points.first {
-                                    path.move(to: firstPoint)
-                                    for point in points.dropFirst() {
-                                        path.addLine(to: point)
-                                    }
-                                }
-                            }
-                            .stroke(Color.blue, lineWidth: 2)
-                            
-                            // Data points
-                            ForEach(Array(chartData.enumerated()), id: \.offset) { index, dataPoint in
-                                Circle()
-                                    .fill(progressColor(for: dataPoint.rate))
-                                    .frame(width: 6, height: 6)
-                                    .position(
-                                        x: 20 + (CGFloat(index) / CGFloat(chartData.count - 1)) * chartWidth,
-                                        y: chartHeight - (CGFloat(dataPoint.rate) * chartHeight) + 20
-                                    )
-                            }
+                    ThirtyDayAreaLineChartView(
+                        chartData: chartData,
+                        lineColor: Color.blue.opacity(0.9),
+                        gradient: LinearGradient(
+                            gradient: Gradient(colors: [Color.blue.opacity(0.25), Color.blue.opacity(0.05)]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        pointColor: { rate in
+                            // Subtle point color
+                            Color.blue.opacity(0.9)
                         }
-                    }
-                    .frame(height: 200)
+                    )
+                    .frame(height: 220)
                     .background(Color(.secondarySystemGroupedBackground))
                     .cornerRadius(12)
                     
-                    // X-axis labels (show every 5th day)
-                    HStack {
-                        ForEach(Array(chartData.enumerated().filter { $0.offset % 5 == 0 }), id: \.offset) { index, dataPoint in
-                            Text(DateFormatter.dayFormatter.string(from: dataPoint.date))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            if index < chartData.count - 5 { Spacer() }
-                        }
-                    }
-                    .padding(.horizontal, 20)
+                    XAxisLabelsView(chartData: chartData)
+                        .padding(.horizontal, 20)
                 }
             } else {
                 Text("No data available yet")
@@ -337,12 +255,12 @@ struct DashboardView: View {
     // MARK: - Most Skipped Tasks
     
     private var mostSkippedSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let skippedTasks = viewModel.getMostSkippedTasks().prefix(3)
+        
+        return VStack(alignment: .leading, spacing: 16) {
             Text("Most Skipped Habits")
                 .font(.title2)
                 .fontWeight(.bold)
-            
-            let skippedTasks = viewModel.getMostSkippedTasks().prefix(3)
             
             if skippedTasks.isEmpty {
                 Text("Great job! No frequently skipped habits.")
@@ -370,7 +288,7 @@ struct DashboardView: View {
                                 .font(.caption)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Color.orange.opacity(0.2))
+                                .background(Color.orange.opacity(0.15))
                                 .foregroundColor(.orange)
                                 .cornerRadius(8)
                         }
@@ -414,30 +332,6 @@ struct DashboardView: View {
         }
     }
     
-    private func heatMapColor(for rate: Double) -> Color {
-        switch rate {
-        case 0:
-            return Color(.systemFill)
-        case 0.01...0.33:
-            return Color.red.opacity(0.6)
-        case 0.34...0.66:
-            return Color.yellow.opacity(0.6)
-        case 0.67...0.99:
-            return Color.green.opacity(0.6)
-        case 1.0:
-            return Color.green
-        default:
-            return Color(.systemFill)
-        }
-    }
-    
-    private func checkForRecovery() {
-        let recoveryInfo = NotificationManager.shared.shouldShowRecoveryBanner()
-        showingRecoveryBanner = recoveryInfo.show
-        recoveryPeriod = recoveryInfo.period
-        recoveryDate = recoveryInfo.date
-    }
-    
     private func progressColor(for rate: Double) -> Color {
         switch rate {
         case 0.8...1.0:
@@ -462,6 +356,208 @@ struct DashboardView: View {
         }
         
         return streak
+    }
+}
+
+// MARK: - Extracted Subviews
+
+// Cleaner weekly spark bars with subtle grid and an average badge.
+private struct WeeklySparkBarsView: View {
+    let weeklyData: [(date: Date, rate: Double)]
+    let weeklyAverage: Double
+    let barColor: (Double) -> Color
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("\(Int(weeklyAverage * 100))% avg")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+                
+                Spacer()
+            }
+            
+            GeometryReader { geometry in
+                let height = geometry.size.height
+                let width = geometry.size.width
+                let barWidth = max(12, (width - 40) / CGFloat(max(weeklyData.count, 1)) - 6)
+                
+                ZStack {
+                    // Subtle horizontal grid (3 lines)
+                    VStack(spacing: 0) {
+                        ForEach(0..<3) { _ in
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.08))
+                                .frame(height: 1)
+                            Spacer()
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    
+                    HStack(alignment: .bottom, spacing: 6) {
+                        ForEach(weeklyData, id: \.date) { point in
+                            let barHeight = CGFloat(point.rate) * (height - 20)
+                            VStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(barColor(point.rate))
+                                    .frame(width: barWidth, height: max(4, barHeight))
+                                
+                                Text(DateFormatter.weekdayFormatter.string(from: point.date))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                }
+            }
+            .frame(height: 120)
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(12)
+    }
+}
+
+private struct DailyStreakView: View {
+    let currentStreak: Int
+    let todayRate: Double
+    let progressColor: (Double) -> Color
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text("Current Streak")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("\(currentStreak) days")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing) {
+                Text("Today")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("\(Int(todayRate * 100))%")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(progressColor(todayRate))
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(12)
+    }
+}
+
+// Clean 30-day line with soft gradient fill and minimal axes/grid.
+private struct ThirtyDayAreaLineChartView: View {
+    let chartData: [(date: Date, rate: Double)]
+    let lineColor: Color
+    let gradient: LinearGradient
+    let pointColor: (Double) -> Color
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let chartHeight = geometry.size.height - 40
+            let chartWidth = geometry.size.width - 40
+            
+            ZStack {
+                // Subtle grid: 100%, 50%, 0%
+                VStack(spacing: 0) {
+                    ForEach([1.0, 0.5, 0.0], id: \.self) { frac in
+                        HStack {
+                            Text("\(Int(frac * 100))%")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 30, alignment: .leading)
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.08))
+                                .frame(height: 1)
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+                
+                // Area fill under the line
+                areaPath(in: chartWidth, chartHeight: chartHeight)
+                    .fill(gradient)
+                    .opacity(0.8)
+                
+                // Line
+                linePath(in: chartWidth, chartHeight: chartHeight)
+                    .stroke(lineColor, lineWidth: 2)
+                
+                // Points (subtle)
+                let points = positions(in: chartWidth, chartHeight: chartHeight)
+                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                    Circle()
+                        .fill(pointColor(chartData[index].rate))
+                        .frame(width: 5, height: 5)
+                        .position(point)
+                }
+            }
+        }
+    }
+    
+    private func positions(in chartWidth: CGFloat, chartHeight: CGFloat) -> [CGPoint] {
+        guard !chartData.isEmpty else { return [] }
+        return chartData.enumerated().map { index, dp in
+            CGPoint(
+                x: 20 + (CGFloat(index) / CGFloat(max(chartData.count - 1, 1))) * chartWidth,
+                y: chartHeight - (CGFloat(dp.rate) * chartHeight) + 20
+            )
+        }
+    }
+    
+    private func linePath(in chartWidth: CGFloat, chartHeight: CGFloat) -> Path {
+        var path = Path()
+        let pts = positions(in: chartWidth, chartHeight: chartHeight)
+        guard let first = pts.first else { return path }
+        path.move(to: first)
+        for p in pts.dropFirst() {
+            path.addLine(to: p)
+        }
+        return path
+    }
+    
+    private func areaPath(in chartWidth: CGFloat, chartHeight: CGFloat) -> Path {
+        var path = Path()
+        let pts = positions(in: chartWidth, chartHeight: chartHeight)
+        guard let first = pts.first, let last = pts.last else { return path }
+        path.move(to: CGPoint(x: first.x, y: chartHeight + 20))
+        for p in pts {
+            path.addLine(to: p)
+        }
+        path.addLine(to: CGPoint(x: last.x, y: chartHeight + 20))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct XAxisLabelsView: View {
+    let chartData: [(date: Date, rate: Double)]
+    
+    var body: some View {
+        HStack {
+            ForEach(Array(chartData.enumerated().filter { $0.offset % 5 == 0 }), id: \.offset) { index, dataPoint in
+                Text(DateFormatter.dayFormatter.string(from: dataPoint.date))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                if index < chartData.count - 5 { Spacer() }
+            }
+        }
     }
 }
 

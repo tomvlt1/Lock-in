@@ -19,6 +19,7 @@
 		A1B2C3D4E609 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E608 /* NotificationManager.swift */; };
 		A1B2C3D4E60B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E60A /* SampleData.swift */; };
 		A1B2C3D4E60E /* NewMe.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E60D /* NewMe.xcdatamodeld */; };
+		E21601FC2E8037F9003278CD /* WeightTrackingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E21601FB2E8037F8003278CD /* WeightTrackingView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,8 @@
 		A1B2C3D4E60A /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
 		A1B2C3D4E60C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D4E60D /* NewMe.xcdatamodeld */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodeld; path = NewMe.xcdatamodeld; sourceTree = "<group>"; };
+		E21601FB2E8037F8003278CD /* WeightTrackingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WeightTrackingView.swift; sourceTree = "<group>"; };
+		E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +57,7 @@
 			children = (
 				A1B2C3D4E5F4 /* NewMe */,
 				A1B2C3D4E5F3 /* Products */,
+				E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -70,6 +74,7 @@
 			children = (
 				A1B2C3D4E5F5 /* HabitTrackerApp.swift */,
 				A1B2C3D4E5F7 /* ContentView.swift */,
+				E21601FB2E8037F8003278CD /* WeightTrackingView.swift */,
 				A1B2C3D4E602 /* DashboardView.swift */,
 				A1B2C3D4E604 /* SettingsView.swift */,
 				A1B2C3D4E606 /* ChecklistSheetView.swift */,
@@ -137,6 +142,8 @@
 				Base,
 			);
 			mainGroup = A1B2C3D4E5E9;
+			packageReferences = (
+			);
 			productRefGroup = A1B2C3D4E5F3 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -165,6 +172,7 @@
 			files = (
 				A1B2C3D4E5F8 /* ContentView.swift in Sources */,
 				A1B2C3D4E603 /* DashboardView.swift in Sources */,
+				E21601FC2E8037F9003278CD /* WeightTrackingView.swift in Sources */,
 				A1B2C3D4E605 /* SettingsView.swift in Sources */,
 				A1B2C3D4E607 /* ChecklistSheetView.swift in Sources */,
 				A1B2C3D4E5F6 /* HabitTrackerApp.swift in Sources */,

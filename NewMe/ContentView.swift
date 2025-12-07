@@ -228,7 +228,8 @@ struct TaskRowView: View {
         .sheet(isPresented: $showingEditSheet) {
             EditTaskView(
                 taskTitle: $editedTitle,
-                originalTitle: task.title ?? "Untitled Task"
+                originalTitle: task.title ?? "Untitled Task",
+                task: task
             ) {
                 if !editedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     viewModel.updateTask(task, title: editedTitle)
@@ -403,9 +404,19 @@ struct PeriodSelectionRow: View {
 struct EditTaskView: View {
     @Binding var taskTitle: String
     let originalTitle: String
+    let task: Task
     let onSave: () -> Void
     @Environment(\.presentationMode) var presentationMode
-    
+    @State private var selectedPeriods: Set<Period>
+
+    init(taskTitle: Binding<String>, originalTitle: String, task: Task, onSave: @escaping () -> Void) {
+        self._taskTitle = taskTitle
+        self.originalTitle = originalTitle
+        self.task = task
+        self.onSave = onSave
+        self._selectedPeriods = State(initialValue: task.selectedPeriods)
+    }
+
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: 24) {
@@ -413,25 +424,47 @@ struct EditTaskView: View {
                     Text("Edit Habit")
                         .font(.largeTitle)
                         .fontWeight(.bold)
-                    
-                    Text("Update your habit name")
+
+                    Text("Update your habit name and schedule")
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .padding(.top)
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Habit Name")
                         .font(.headline)
-                    
+
                     TextField("Habit name", text: $taskTitle)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .submitLabel(.done)
                         .onSubmit {
-                            onSave()
+                            saveTask()
                         }
                 }
-                
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("When do you want to track this habit?")
+                        .font(.headline)
+
+                    VStack(spacing: 8) {
+                        PeriodSelectionRow(
+                            title: "Morning",
+                            subtitle: "Track this habit in the morning",
+                            period: .morning,
+                            selectedPeriods: $selectedPeriods
+                        )
+
+                        PeriodSelectionRow(
+                            title: "Evening",
+                            subtitle: "Track this habit in the evening",
+                            period: .evening,
+                            selectedPeriods: $selectedPeriods
+                        )
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Spacer()
             }
             .padding()
@@ -442,15 +475,20 @@ struct EditTaskView: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
-                        onSave()
+                        saveTask()
                     }
-                    .disabled(taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedPeriods.isEmpty)
                 }
             }
         }
+    }
+
+    private func saveTask() {
+        task.selectedPeriods = selectedPeriods
+        onSave()
     }
 }
 
@@ -460,17 +498,44 @@ struct OneOffTodosView: View {
     @EnvironmentObject private var viewModel: TaskViewModel
     @State private var showingAddTodo = false
     @State private var newTodoTitle = ""
+    @State private var editingTodo: OneOffTodo?
     
     var pendingTodos: [OneOffTodo] {
-        viewModel.oneOffTodos.filter { $0.statusEnum == .pending }
+        viewModel.oneOffTodos
+            .filter { $0.statusEnum == .pending }
+            .sorted { todo1, todo2 in
+                // First, sort by due date presence (with due date comes first)
+                let todo1HasDueDate = todo1.dueDate != nil
+                let todo2HasDueDate = todo2.dueDate != nil
+
+                if todo1HasDueDate && !todo2HasDueDate {
+                    return true // todo1 comes first
+                } else if !todo1HasDueDate && todo2HasDueDate {
+                    return false // todo2 comes first
+                } else if todo1HasDueDate && todo2HasDueDate {
+                    // Both have due dates, sort by earliest date/time
+                    return todo1.dueDate! < todo2.dueDate!
+                } else {
+                    // Neither has due date, sort by creation date
+                    return (todo1.created ?? Date.distantPast) < (todo2.created ?? Date.distantPast)
+                }
+            }
     }
-    
+
     var completedTodos: [OneOffTodo] {
-        viewModel.oneOffTodos.filter { $0.statusEnum == .completed }
+        viewModel.oneOffTodos
+            .filter { $0.statusEnum == .completed }
+            .sorted { todo1, todo2 in
+                return (todo1.created ?? Date.distantPast) > (todo2.created ?? Date.distantPast)
+            }
     }
-    
+
     var failedTodos: [OneOffTodo] {
-        viewModel.oneOffTodos.filter { $0.statusEnum == .failed }
+        viewModel.oneOffTodos
+            .filter { $0.statusEnum == .failed }
+            .sorted { todo1, todo2 in
+                return (todo1.created ?? Date.distantPast) > (todo2.created ?? Date.distantPast)
+            }
     }
     
     var body: some View {
@@ -483,6 +548,11 @@ struct OneOffTodosView: View {
                         Section("To Do") {
                             ForEach(pendingTodos, id: \.id) { todo in
                                 OneOffTodoRowView(todo: todo)
+                                    .contextMenu {
+                                        Button("Edit Due Date/Time") {
+                                            editingTodo = todo
+                                        }
+                                    }
                             }
                         }
                     }
@@ -516,12 +586,17 @@ struct OneOffTodosView: View {
             }
         }
         .sheet(isPresented: $showingAddTodo) {
-            AddOneOffTodoView(newTodoTitle: $newTodoTitle) {
+            AddOneOffTodoView(newTodoTitle: $newTodoTitle) { dueDate in
                 if !newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.addOneOffTodo(title: newTodoTitle)
+                    viewModel.addOneOffTodo(title: newTodoTitle, dueDate: dueDate)
                     newTodoTitle = ""
                 }
                 showingAddTodo = false
+            }
+        }
+        .sheet(item: $editingTodo, onDismiss: { editingTodo = nil }) { todo in
+            EditOneOffTodoView(todo: todo) { newDate in
+                viewModel.updateOneOffTodoDueDate(todo, to: newDate)
             }
         }
     }
@@ -581,10 +656,20 @@ struct OneOffTodoRowView: View {
                     .font(.body)
                     .strikethrough(todo.statusEnum == .completed)
                     .foregroundColor(todo.statusEnum == .completed ? .secondary : .primary)
-                
-                Text("Added \(todo.created ?? Date(), style: .date)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+                HStack(spacing: 6) {
+                    Text("Added \(todo.created ?? Date(), style: .date)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if let dueDate = todo.dueDate {
+                        Spacer()
+                        Text("Due \(dueDate, formatter: DateFormatter.todoDueFormatter)")
+                            .font(.caption)
+                            .foregroundColor(todo.isOverdue ? .red : .secondary)
+                            .fontWeight(todo.isOverdue ? .semibold : .regular)
+                    }
+                }
             }
             
             Spacer()
@@ -625,9 +710,13 @@ struct OneOffTodoRowView: View {
 
 struct AddOneOffTodoView: View {
     @Binding var newTodoTitle: String
-    let onSave: () -> Void
+    let onSave: (Date?) -> Void
     @Environment(\.presentationMode) var presentationMode
-    
+    @State private var hasDueDate = false
+    @State private var dueDate = Date()
+    @State private var hasDueTime = false
+    @State private var dueTime = Date()
+
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: 24) {
@@ -635,25 +724,38 @@ struct AddOneOffTodoView: View {
                     Text("Add Quick Note")
                         .font(.largeTitle)
                         .fontWeight(.bold)
-                    
-                    Text("Add a quick todo or mental note")
+
+                    Text("Add a todo with optional due date and time")
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .padding(.top)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Note")
-                        .font(.headline)
-                    
-                    TextField("e.g., Call dentist, Buy groceries", text: $newTodoTitle)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .submitLabel(.done)
-                        .onSubmit {
-                            onSave()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Note")
+                            .font(.headline)
+
+                        TextField("e.g., Call dentist, Buy groceries", text: $newTodoTitle)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .submitLabel(.done)
+                    }
+
+                    Toggle("Set due date", isOn: $hasDueDate)
+
+                    if hasDueDate {
+                        DatePicker("Due Date", selection: $dueDate, in: Date()..., displayedComponents: .date)
+                            .datePickerStyle(CompactDatePickerStyle())
+
+                        Toggle("Set time", isOn: $hasDueTime)
+
+                        if hasDueTime {
+                            DatePicker("Time", selection: $dueTime, displayedComponents: .hourAndMinute)
+                                .datePickerStyle(CompactDatePickerStyle())
                         }
+                    }
                 }
-                
+
                 Spacer()
             }
             .padding()
@@ -664,10 +766,29 @@ struct AddOneOffTodoView: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Add") {
-                        onSave()
+                        let finalDueDate: Date? = {
+                            guard hasDueDate else { return nil }
+                            if hasDueTime {
+                                // Combine selected date and time
+                                let calendar = Calendar.current
+                                let dateComponents = calendar.dateComponents([.year, .month, .day], from: dueDate)
+                                let timeComponents = calendar.dateComponents([.hour, .minute], from: dueTime)
+                                var combined = DateComponents()
+                                combined.year = dateComponents.year
+                                combined.month = dateComponents.month
+                                combined.day = dateComponents.day
+                                combined.hour = timeComponents.hour
+                                combined.minute = timeComponents.minute
+                                return calendar.date(from: combined)
+                            } else {
+                                // Store start of day for date-only; scheduler will default to 9 AM
+                                return Calendar.current.startOfDay(for: dueDate)
+                            }
+                        }()
+                        onSave(finalDueDate)
                     }
                     .disabled(newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -676,262 +797,56 @@ struct AddOneOffTodoView: View {
     }
 }
 
-// MARK: - Weight Tracking View
+// MARK: - Edit OneOffTodo View
 
-struct WeightTrackingView: View {
-    @EnvironmentObject private var viewModel: TaskViewModel
-    @State private var showingAddWeight = false
-    @State private var newWeight = ""
-    @State private var selectedDate = Date()
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Current weight section
-                    currentWeightSection
-                    
-                    // Weight chart section
-                    weightChartSection
-                    
-                    // Recent entries section
-                    recentEntriesSection
-                }
-                .padding()
-            }
-            .navigationTitle("Weight Tracker")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAddWeight = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showingAddWeight) {
-            AddWeightEntryView(newWeight: $newWeight, selectedDate: $selectedDate) {
-                if let weight = Double(newWeight), weight > 0 {
-                    viewModel.addWeightEntry(weight: weight, date: selectedDate)
-                    newWeight = ""
-                    selectedDate = Date()
-                }
-                showingAddWeight = false
-            }
-        }
-    }
-    
-    // MARK: - Current Weight Section
-    
-    private var currentWeightSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Current Weight")
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            if let latestEntry = viewModel.weightEntries.first {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("\(latestEntry.weight, specifier: "%.1f") kgs")
-                            .font(.title)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.blue)
-                        
-                        Text("Last updated: \(latestEntry.date ?? Date(), style: .date)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    if viewModel.weightEntries.count > 1 {
-                        let previousEntry = viewModel.weightEntries[1]
-                        let change = latestEntry.weight - previousEntry.weight
-                        HStack(spacing: 4) {
-                            Image(systemName: change >= 0 ? "arrow.up" : "arrow.down")
-                                .font(.caption)
-                                .foregroundColor(change >= 0 ? .red : .green)
-                            
-                            Text("\(abs(change), specifier: "%.1f") kgs")
-                                .font(.caption)
-                                .foregroundColor(change >= 0 ? .red : .green)
-                        }
-                    }
-                }
-                .padding()
-                .background(Color(.secondarySystemGroupedBackground))
-                .cornerRadius(12)
-            } else {
-                VStack(spacing: 16) {
-                    Image(systemName: "scalemass")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray)
-                    
-                    Text("No weight entries yet")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Add your first weight entry to start tracking your progress.")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                    
-                    Button {
-                        showingAddWeight = true
-                    } label: {
-                        Text("Add Weight Entry")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.blue)
-                            .cornerRadius(12)
-                    }
-                }
-                .padding(40)
-                .frame(maxWidth: .infinity)
-                .background(Color(.secondarySystemGroupedBackground))
-                .cornerRadius(12)
-            }
-        }
-    }
-    
-    // MARK: - Weight Chart Section
-    
-    private var weightChartSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Progress Chart")
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            let chartData = viewModel.getWeightEntriesForChart()
-            
-            if chartData.count >= 2 {
-                WeightLineChart(data: chartData)
-                    .frame(height: 200)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .cornerRadius(12)
-            } else {
-                Text("Add at least 2 weight entries to see your progress chart")
-                    .foregroundColor(.secondary)
-                    .frame(height: 200)
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.systemGroupedBackground))
-                    .cornerRadius(12)
-            }
-        }
-    }
-    
-    // MARK: - Recent Entries Section
-    
-    private var recentEntriesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Recent Entries")
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            if viewModel.weightEntries.isEmpty {
-                Text("No entries yet")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color(.systemGroupedBackground))
-                    .cornerRadius(12)
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(Array(viewModel.weightEntries.prefix(10).enumerated()), id: \.element.id) { index, entry in
-                        WeightEntryRowView(entry: entry)
-                    }
-                }
-                .padding()
-                .background(Color(.secondarySystemGroupedBackground))
-                .cornerRadius(12)
-            }
-        }
-    }
-}
-
-// MARK: - Weight Entry Row View
-
-struct WeightEntryRowView: View {
-    @EnvironmentObject private var viewModel: TaskViewModel
-    let entry: WeightEntry
-    
-    @State private var showingDeleteAlert = false
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(entry.weight, specifier: "%.1f") kgs")
-                    .font(.body)
-                    .fontWeight(.medium)
-                
-                Text(entry.date ?? Date(), style: .date)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-        }
-        .contextMenu {
-            Button("Delete") {
-                showingDeleteAlert = true
-            }
-        }
-        .alert(isPresented: $showingDeleteAlert) {
-            Alert(
-                title: Text("Delete Weight Entry"),
-                message: Text("Are you sure you want to delete this weight entry?"),
-                primaryButton: .destructive(Text("Delete")) {
-                    viewModel.deleteWeightEntry(entry)
-                },
-                secondaryButton: .cancel()
-            )
-        }
-    }
-}
-
-// MARK: - Add Weight Entry View
-
-struct AddWeightEntryView: View {
-    @Binding var newWeight: String
-    @Binding var selectedDate: Date
-    let onSave: () -> Void
+struct EditOneOffTodoView: View {
+    let todo: OneOffTodo
+    let onSave: (Date?) -> Void
     @Environment(\.presentationMode) var presentationMode
+    
+    @State private var hasDueDate: Bool = false
+    @State private var dueDate: Date = Date()
+    @State private var hasDueTime: Bool = false
+    @State private var dueTime: Date = Date()
+    
+    init(todo: OneOffTodo, onSave: @escaping (Date?) -> Void) {
+        self.todo = todo
+        self.onSave = onSave
+        // Initialize state from existing dueDate
+        if let existing = todo.dueDate {
+            let calendar = Calendar.current
+            _hasDueDate = State(initialValue: true)
+            _dueDate = State(initialValue: calendar.startOfDay(for: existing))
+            let comps = calendar.dateComponents([.hour, .minute, .second], from: existing)
+            let hasTime = (comps.hour ?? 0) != 0 || (comps.minute ?? 0) != 0 || (comps.second ?? 0) != 0
+            _hasDueTime = State(initialValue: hasTime)
+            _dueTime = State(initialValue: existing)
+        } else {
+            _hasDueDate = State(initialValue: false)
+            _dueDate = State(initialValue: Date())
+            _hasDueTime = State(initialValue: false)
+            _dueTime = State(initialValue: Date())
+        }
+    }
     
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Add Weight Entry")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    
-                    Text("Track your daily weight")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top)
+                Text("Edit Due Date/Time")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
                 
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Weight (kgs)")
-                            .font(.headline)
-                        
-                        TextField("e.g., 150.5", text: $newWeight)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .keyboardType(.decimalPad)
-                            .submitLabel(.done)
-                            .onSubmit {
-                                onSave()
-                            }
-                    }
+                Toggle("Set due date", isOn: $hasDueDate)
+                
+                if hasDueDate {
+                    DatePicker("Due Date", selection: $dueDate, in: Date()..., displayedComponents: .date)
+                        .datePickerStyle(CompactDatePickerStyle())
                     
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Date")
-                            .font(.headline)
-                        
-                        DatePicker("Select Date", selection: $selectedDate, displayedComponents: .date)
+                    Toggle("Set time", isOn: $hasDueTime)
+                    
+                    if hasDueTime {
+                        DatePicker("Time", selection: $dueTime, displayedComponents: .hourAndMinute)
                             .datePickerStyle(CompactDatePickerStyle())
                     }
                 }
@@ -946,88 +861,40 @@ struct AddWeightEntryView: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") {
-                        onSave()
-                    }
-                    .disabled(newWeight.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || Double(newWeight) == nil || Double(newWeight)! <= 0)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Weight Line Chart
-
-struct WeightLineChart: View {
-    let data: [(date: Date, weight: Double)]
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Weight Progress Chart")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            
-            if data.count >= 2 {
-                let firstWeight = data.last?.weight ?? 0
-                let lastWeight = data.first?.weight ?? 0
-                let change = lastWeight - firstWeight
-                
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Starting Weight")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("\(firstWeight, specifier: "%.1f") kgs")
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    
-                    Spacer()
-                    
-                    VStack {
-                        Text("Change")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 4) {
-                            Image(systemName: change >= 0 ? "arrow.up" : "arrow.down")
-                                .font(.caption)
-                                .foregroundColor(change >= 0 ? .red : .green)
-                            Text("\(abs(change), specifier: "%.1f") kgs")
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(change >= 0 ? .red : .green)
-                        }
-                    }
-                    
-                    Spacer()
-                    
-                    VStack(alignment: .trailing) {
-                        Text("Current Weight")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("\(lastWeight, specifier: "%.1f") kgs")
-                            .font(.body)
-                            .fontWeight(.medium)
+                    Button("Save") {
+                        let finalDueDate: Date? = {
+                            guard hasDueDate else { return nil }
+                            if hasDueTime {
+                                let calendar = Calendar.current
+                                let dateComponents = calendar.dateComponents([.year, .month, .day], from: dueDate)
+                                let timeComponents = calendar.dateComponents([.hour, .minute], from: dueTime)
+                                var combined = DateComponents()
+                                combined.year = dateComponents.year
+                                combined.month = dateComponents.month
+                                combined.day = dateComponents.day
+                                combined.hour = timeComponents.hour
+                                combined.minute = timeComponents.minute
+                                return calendar.date(from: combined)
+                            } else {
+                                // Store start of day; scheduler will default to 9 AM
+                                return Calendar.current.startOfDay(for: dueDate)
+                            }
+                        }()
+                        onSave(finalDueDate)
+                        presentationMode.wrappedValue.dismiss()
                     }
                 }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
-            } else {
-                Text("Not enough data for chart")
-                    .foregroundColor(.secondary)
-                    .padding()
             }
         }
     }
 }
 
 extension DateFormatter {
-    static let shortDateFormatter: DateFormatter = {
+    static let todoDueFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "M/d"
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short // shows time if present
         return formatter
     }()
 }
