@@ -546,10 +546,16 @@ class TaskViewModel: ObservableObject {
         let calendar = Calendar.current
 
         let allTasks = tasks
+        print("📊 CSV Export Debug:")
+        print("  - Total tasks: \(allTasks.count)")
+        print("  - Active tasks: \(activeTasks.count)")
+        print("  - Archived tasks: \(archivedTasks.count)")
+        
         var allDates = Set<Date>()
 
         for task in allTasks {
             let completions = task.completionsArray
+            print("  - Task '\(task.title ?? "Untitled")' has \(completions.count) completions")
             for completion in completions {
                 if let date = completion.date {
                     let dayDate = calendar.startOfDay(for: date)
@@ -572,6 +578,7 @@ class TaskViewModel: ObservableObject {
         }
 
         let sortedDates = allDates.sorted()
+        print("  - Total unique dates: \(sortedDates.count)")
 
         var headerColumns = ["Date"]
         for task in allTasks.sorted(by: { ($0.title ?? "") < ($1.title ?? "") }) {
@@ -584,6 +591,9 @@ class TaskViewModel: ObservableObject {
         }
         headerColumns.append("Overall_Completion_%")
         headerColumns.append("Weight")
+        
+        print("  - Header columns: \(headerColumns.count)")
+        print("  - Headers: \(headerColumns.joined(separator: ", "))")
 
         var csvContent = headerColumns.joined(separator: ",") + "\n"
 
@@ -608,6 +618,9 @@ class TaskViewModel: ObservableObject {
 
             csvContent += rowData.joined(separator: ",") + "\n"
         }
+        
+        print("  - CSV size: \(csvContent.count) characters")
+        print("  - CSV preview: \(csvContent.prefix(200))")
 
         return csvContent
     }
