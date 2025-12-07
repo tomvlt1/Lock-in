@@ -466,7 +466,12 @@ struct SettingsView: View {
         dateFormatter.dateFormat = "yyyy-MM-dd"
         let fileName = "habit-history-\(dateFormatter.string(from: Date())).csv"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        let contentToWrite = csvContent.isEmpty ? "Date,Task,Period,Completed,Weight\nNo data available,,,,\n" : csvContent
+        
+        // Check if csvContent has only a header line (count newlines: 0 or 1 means empty/header-only)
+        let lineCount = csvContent.components(separatedBy: "\n").filter { !$0.isEmpty }.count
+        let hasData = lineCount > 1
+        
+        let contentToWrite = hasData ? csvContent : "Date,Task,Period,Completed,Weight\nNo data available,,,,\n"
         try? contentToWrite.write(to: tempURL, atomically: true, encoding: .utf8)
         return tempURL
     }
