@@ -34,6 +34,9 @@ struct SampleData {
         // Create sample one-off todos
         createSampleOneOffTodos(in: context)
         
+        // Create sample plank entries
+        createSamplePlankEntries(in: context)
+        
         // Create default settings
         createDefaultSettings(in: context)
         
@@ -47,7 +50,7 @@ struct SampleData {
     
     private static func clearAllData(in context: NSManagedObjectContext) {
         // Delete all existing data
-        let entityNames = ["Task", "Completion", "OneOffTodo", "AppSettings"]
+        let entityNames = ["Task", "Completion", "OneOffTodo", "AppSettings", "WeightEntry", "PlankEntry"]
         for entityName in entityNames {
             let fetchRequest = NSFetchRequest<NSFetchRequestResult>(entityName: entityName)
             let batchDeleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
@@ -62,8 +65,13 @@ struct SampleData {
     private static func createSampleTasks(in context: NSManagedObjectContext) -> [Task] {
         var tasks: [Task] = []
         
+        let categories = TaskCategory.allCases
+        let weights = TaskWeight.allCases
+        
         for (index, taskTitle) in sampleTasks.enumerated() {
-            let task = Task(context: context, title: taskTitle)
+            let category = categories[index % categories.count]
+            let weight = weights[index % weights.count]
+            let task = Task(context: context, title: taskTitle, category: category, weight: weight)
             
             // Make some tasks older than others
             let daysAgo = Double.random(in: 5...30)
@@ -92,7 +100,7 @@ struct SampleData {
                 // Skip archived tasks for recent dates
                 if task.archived && dayOffset < 7 { continue }
                 
-                for period in Period.allCases {
+                for period in Period.allCases where task.isApplicable(for: period) {
                     // Create realistic completion patterns
                     let completionProbability = getCompletionProbability(
                         for: task,
@@ -100,14 +108,27 @@ struct SampleData {
                         period: period
                     )
                     
-                    if Double.random(in: 0...1) < completionProbability {
+                    let roll = Double.random(in: 0...1)
+                    if roll < completionProbability {
                         let completion = Completion(
                             context: context,
                             date: date,
                             period: period,
-                            skipped: Double.random(in: 0...1) < 0.15 // 15% chance of being marked as skipped
+                            progressUnits: task.weightEnum.requiredUnits
                         )
                         completion.task = task
+                    } else if roll < completionProbability + 0.15 {
+                        // Occasionally log partial progress to demonstrate slider states
+                        let partialUnits = max(0, task.weightEnum.requiredUnits - 1)
+                        if partialUnits > 0 {
+                            let completion = Completion(
+                                context: context,
+                                date: date,
+                                period: period,
+                                progressUnits: partialUnits
+                            )
+                            completion.task = task
+                        }
                     }
                 }
             }
@@ -179,6 +200,19 @@ struct SampleData {
             todo.created = Calendar.current.date(byAdding: .day, value: -Int(daysAgo), to: Date()) ?? Date()
         }
     }
+
+    private static func createSamplePlankEntries(in context: NSManagedObjectContext) {
+        let calendar = Calendar.current
+        let today = Date()
+        for dayOffset in 0..<14 {
+            guard let date = calendar.date(byAdding: .day, value: -dayOffset, to: today) else { continue }
+            let variance = Double.random(in: 0...1)
+            if variance > 0.2 {
+                let duration = Double(Int.random(in: 30...180))
+                _ = PlankEntry(context: context, durationSeconds: duration, date: date)
+            }
+        }
+    }
     
     private static func createDefaultSettings(in context: NSManagedObjectContext) {
         _ = AppSettings.defaultSettings(context: context)
@@ -199,7 +233,7 @@ struct SampleData {
     }
     
     static func createStreakTestData(in context: NSManagedObjectContext) -> Task {
-        let task = Task(context: context, title: "Streak Test Task")
+        let task = Task(context: context, title: "Streak Test Task", category: .health, weight: .low)
         
         let calendar = Calendar.current
         let today = Date()
@@ -209,7 +243,7 @@ struct SampleData {
             guard let date = calendar.date(byAdding: .day, value: -i, to: today) else { continue }
             
             for period in Period.allCases {
-                let completion = Completion(context: context, date: date, period: period, skipped: false)
+                let completion = Completion(context: context, date: date, period: period, progressUnits: task.weightEnum.requiredUnits)
                 completion.task = task
             }
         }
@@ -242,7 +276,8 @@ extension SampleData {
     static func calculateExpectedCompletionRate(for task: Task, days: Int) -> Double {
         // This is a helper function for unit tests to verify streak calculation logic
         let totalOpportunities = days * Period.allCases.count
-        let completedCount = task.completionsArray.filter { !$0.skipped }.count
+        let requiredUnits = task.weightEnum.requiredUnits
+        let completedCount = task.completionsArray.filter { $0.progressUnitsValue >= requiredUnits }.count
         return totalOpportunities > 0 ? Double(completedCount) / Double(totalOpportunities) : 0.0
     }
     
@@ -251,10 +286,11 @@ extension SampleData {
         completionDates: [(Date, Period, Bool)], // (date, period, completed)
         in context: NSManagedObjectContext
     ) -> Task {
-        let task = Task(context: context, title: title)
+        let task = Task(context: context, title: title, category: .general, weight: .low)
         
         for (date, period, completed) in completionDates {
-            let completion = Completion(context: context, date: date, period: period, skipped: !completed)
+            let progress = completed ? task.weightEnum.requiredUnits : 0
+            let completion = Completion(context: context, date: date, period: period, progressUnits: progress)
             completion.task = task
         }
         

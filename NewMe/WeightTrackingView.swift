@@ -57,7 +57,7 @@ struct WeightTrackingView: View {
                 let chartData = viewModel.getWeightEntriesForChart()
 
                 if !chartData.isEmpty {
-                    let currentWeight = chartData.last!
+                    let currentWeight = chartData.first!
                     
                     HStack {
                         VStack(alignment: .leading) {
@@ -74,7 +74,7 @@ struct WeightTrackingView: View {
                         Spacer()
                         
                         if chartData.count > 1 {
-                            let startingWeight = chartData.first!
+                            let startingWeight = chartData.last!
                             let totalChange = currentWeight.weight - startingWeight.weight
                             
                             VStack(alignment: .trailing, spacing: 4) {
@@ -96,7 +96,7 @@ struct WeightTrackingView: View {
                                 
                                 // Recent change
                                 if chartData.count >= 2 {
-                                    let previousWeight = chartData[chartData.count - 2]
+                                    let previousWeight = chartData[1]
                                     let recentChange = currentWeight.weight - previousWeight.weight
 
                                     HStack(spacing: 4) {

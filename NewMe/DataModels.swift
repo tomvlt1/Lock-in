@@ -2,6 +2,68 @@ import CoreData
 import Foundation
 import SwiftUI
 
+// MARK: - Task Metadata
+
+enum TaskCategory: String, CaseIterable, Identifiable, Codable {
+    case general
+    case health
+    case work
+    case learning
+    case personal
+    case wellness
+    case other
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .general: return "General"
+        case .health: return "Health"
+        case .work: return "Work"
+        case .learning: return "Learning"
+        case .personal: return "Personal"
+        case .wellness: return "Wellness"
+        case .other: return "Other"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .general: return .blue
+        case .health: return .green
+        case .work: return .orange
+        case .learning: return .purple
+        case .personal: return .pink
+        case .wellness: return .mint
+        case .other: return .gray
+        }
+    }
+}
+
+enum TaskWeight: String, CaseIterable, Identifiable, Codable {
+    case low
+    case medium
+    case high
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+    
+    var requiredUnits: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        }
+    }
+}
+
 // MARK: - Task Entity Extension
 
 extension Task {
@@ -18,38 +80,26 @@ extension Task {
     /// Check if task is completed for a specific date and period
     func isCompleted(for date: Date, period: Period) -> Bool {
         guard let completion = completion(for: date, period: period) else { return false }
-        return !completion.skipped
+        return completion.progressUnitsValue >= weightEnum.requiredUnits
     }
     
     /// Calculate completion rate for the last N days
     func completionRate(for days: Int) -> Double {
         let calendar = Calendar.current
         let today = Date()
-        var totalOpportunities = 0
-        var completedCount = 0
+        var totalOpportunities = 0.0
+        var completedUnits = 0.0
         
         for i in 0..<days {
             guard let date = calendar.date(byAdding: .day, value: -i, to: today) else { continue }
             
-            for period in Period.allCases {
-                if isApplicable(for: period) {
-                    totalOpportunities += 1
-                    if isCompleted(for: date, period: period) {
-                        completedCount += 1
-                    }
-                }
+            for period in Period.allCases where isApplicable(for: period) {
+                totalOpportunities += 1
+                completedUnits += completionContribution(for: date, period: period)
             }
         }
         
-        return totalOpportunities > 0 ? Double(completedCount) / Double(totalOpportunities) : 0.0
-    }
-    
-    /// Calculate skip rate for analytics
-    var skipRate: Double {
-        let totalCompletions = completionsArray.count
-        guard totalCompletions > 0 else { return 0.0 }
-        let skippedCount = completionsArray.filter { $0.skipped }.count
-        return Double(skippedCount) / Double(totalCompletions)
+        return totalOpportunities > 0 ? completedUnits / totalOpportunities : 0.0
     }
     
     /// Convert Core Data set to array
@@ -69,19 +119,68 @@ extension Task {
         }
     }
     
+    var categoryEnum: TaskCategory {
+        get {
+            TaskCategory(rawValue: self.value(forKey: "category") as? String ?? "general") ?? .general
+        }
+        set {
+            self.setValue(newValue.rawValue, forKey: "category")
+        }
+    }
+    
+    var weightEnum: TaskWeight {
+        get {
+            TaskWeight(rawValue: self.value(forKey: "weight") as? String ?? "low") ?? .low
+        }
+        set {
+            self.setValue(newValue.rawValue, forKey: "weight")
+        }
+    }
+    
     /// Check if task is applicable for a specific period
     func isApplicable(for period: Period) -> Bool {
         return selectedPeriods.contains(period)
     }
+
+    /// Fractional credit the task earns for a specific date/period (0-1).
+    func completionContribution(for date: Date, period: Period) -> Double {
+        guard isApplicable(for: period) else { return 0 }
+        let progress = completion(for: date, period: period)?.progressUnitsValue ?? 0
+        let required = max(1, weightEnum.requiredUnits)
+        return min(1.0, Double(progress) / Double(required))
+    }
+
+    /// Average completion fraction across all applicable periods on a date.
+    func completionFraction(for date: Date) -> Double {
+        let applicable = Period.allCases.filter { isApplicable(for: $0) }
+        guard !applicable.isEmpty else { return 0 }
+        let total = applicable.reduce(0.0) { $0 + completionContribution(for: date, period: $1) }
+        return total / Double(applicable.count)
+    }
+
+    /// Returns true if every applicable period is fully completed on the date.
+    func isFullyCompleted(on date: Date) -> Bool {
+        Period.allCases
+            .filter { isApplicable(for: $0) }
+            .allSatisfy { completionContribution(for: date, period: $0) >= 1.0 }
+    }
     
     /// Convenience initializer
-    convenience init(context: NSManagedObjectContext, title: String, periods: Set<Period> = [.morning, .evening]) {
+    convenience init(
+        context: NSManagedObjectContext,
+        title: String,
+        periods: Set<Period> = [.morning, .evening],
+        category: TaskCategory = .general,
+        weight: TaskWeight = .low
+    ) {
         self.init(context: context)
         self.id = UUID()
         self.title = title
         self.created = Date()
         self.archived = false
         self.selectedPeriods = periods
+        self.categoryEnum = category
+        self.weightEnum = weight
     }
 }
 
@@ -97,12 +196,27 @@ extension Completion {
         }
     }
     
+    var progressUnitsValue: Int {
+        get {
+            let stored = Int(self.value(forKey: "progressUnits") as? Int16 ?? 0)
+            if stored == 0 && !skipped {
+                return task?.weightEnum.requiredUnits ?? TaskWeight.low.requiredUnits
+            }
+            return max(0, stored)
+        }
+        set {
+            let clamped = max(0, min(3, newValue))
+            self.setValue(Int16(clamped), forKey: "progressUnits")
+            self.skipped = clamped == 0
+        }
+    }
+    
     /// Convenience initializer
-    convenience init(context: NSManagedObjectContext, date: Date, period: Period, skipped: Bool = false) {
+    convenience init(context: NSManagedObjectContext, date: Date, period: Period, progressUnits: Int = 0) {
         self.init(context: context)
         self.date = date
         self.periodEnum = period
-        self.skipped = skipped
+        self.progressUnitsValue = progressUnits
     }
 }
 
@@ -175,6 +289,17 @@ extension WeightEntry {
         self.init(context: context)
         self.id = UUID()
         self.weight = weight
+        self.date = date
+    }
+}
+
+// MARK: - PlankEntry Entity Extension
+
+extension PlankEntry {
+    convenience init(context: NSManagedObjectContext, durationSeconds: Double, date: Date = Date()) {
+        self.init(context: context)
+        self.id = UUID()
+        self.durationSeconds = durationSeconds
         self.date = date
     }
 }

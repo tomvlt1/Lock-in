@@ -14,6 +14,9 @@ struct SettingsView: View {
     @State private var showingAddTask = false
     @State private var newTaskTitle = ""
     @State private var showingArchived = false
+    @State private var showingEditTaskSheet = false
+    @State private var editingTaskTitle = ""
+    @State private var taskBeingEdited: Task?
     @State private var taskToDelete: Task?
     @State private var showingDeleteAlert = false
     @State private var showingShareSheet = false
@@ -47,9 +50,14 @@ struct SettingsView: View {
             }
         }
         .sheet(isPresented: $showingAddTask, content: {
-            AddTaskSheetWithPeriods(newTaskTitle: $newTaskTitle) { periods in
+            AddTaskSheetWithPeriods(newTaskTitle: $newTaskTitle) { periods, category, weight in
                 if !newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.addTask(title: newTaskTitle, periods: periods)
+                    viewModel.addTask(
+                        title: newTaskTitle,
+                        periods: periods,
+                        category: category,
+                        weight: weight
+                    )
                     newTaskTitle = ""
                 }
                 showingAddTask = false
@@ -57,6 +65,27 @@ struct SettingsView: View {
         })
         .sheet(isPresented: $showingArchived, content: {
             ArchivedTasksView()
+        })
+        .sheet(isPresented: $showingEditTaskSheet, content: {
+            if let task = taskBeingEdited {
+                EditTaskView(
+                    taskTitle: $editingTaskTitle,
+                    originalTitle: task.title ?? "Untitled Task",
+                    task: task
+                ) { periods, category, weight in
+                    if !editingTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        viewModel.updateTask(
+                            task,
+                            title: editingTaskTitle,
+                            periods: periods,
+                            category: category,
+                            weight: weight
+                        )
+                    }
+                    taskBeingEdited = nil
+                    showingEditTaskSheet = false
+                }
+            }
         })
         .onAppear {
             loadCurrentSettings()
@@ -82,19 +111,34 @@ struct SettingsView: View {
                 excludedActivityTypes: [.assignToContact, .addToReadingList]
             )
         })
-        // CSV Import picker (no Swift.Task needed; run on background queue)
+        // CSV Import picker with copy-to-temp to avoid security scope issues
         .sheet(isPresented: $showingImportPicker, content: {
             DocumentPicker { url in
-                guard let url = url else { return }
+                guard let pickedURL = url else { return }
                 DispatchQueue.global(qos: .userInitiated).async {
+                    // Copy to a temp URL inside our container to avoid provider/scope issues
+                    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".csv")
                     do {
-                        let result = try viewModel.importFromCSV(url: url)
+                        // Remove if exists
+                        if FileManager.default.fileExists(atPath: tempURL.path) {
+                            try? FileManager.default.removeItem(at: tempURL)
+                        }
+                        try FileManager.default.copyItem(at: pickedURL, to: tempURL)
+                        let result = try viewModel.importFromCSV(url: tempURL)
                         DispatchQueue.main.async {
                             lastImportResult = "Import finished: \(result)"
                         }
                     } catch {
-                        DispatchQueue.main.async {
-                            lastImportResult = "Import failed: \(error.localizedDescription)"
+                        // If copy fails, try importing directly as fallback
+                        do {
+                            let result = try viewModel.importFromCSV(url: pickedURL)
+                            DispatchQueue.main.async {
+                                lastImportResult = "Import finished: \(result)"
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                lastImportResult = "Import failed: \(friendlyImportError(error))"
+                            }
                         }
                     }
                 }
@@ -177,16 +221,24 @@ struct SettingsView: View {
                 Label("Add New Habit", systemImage: "plus.circle")
             }
             
-            ForEach(viewModel.activeTasks, id: \.id) { task in
-                HStack {
-                    Text(task.title ?? "Untitled Task")
+            ForEach(sortedActiveTasks, id: \.id) { task in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(task.title ?? "Untitled Task")
+                            .font(.body)
+                        Text("\(task.categoryEnum.displayName) • \(task.weightEnum.displayName) weight")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     Image(systemName: "ellipsis.circle")
                         .foregroundColor(.gray)
                 }
                 .contextMenu {
                     Button("Edit") {
-                        // TODO: Implement edit functionality
+                        taskBeingEdited = task
+                        editingTaskTitle = task.title ?? "Untitled Task"
+                        showingEditTaskSheet = true
                     }
                     Button("Archive") {
                         viewModel.archiveTask(task)
@@ -309,6 +361,18 @@ struct SettingsView: View {
     }
     
     // MARK: - Helper Properties
+
+    private var sortedActiveTasks: [Task] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return viewModel.activeTasks.sorted { first, second in
+            let firstComplete = first.isFullyCompleted(on: today)
+            let secondComplete = second.isFullyCompleted(on: today)
+            if firstComplete == secondComplete {
+                return (first.title ?? "").localizedCaseInsensitiveCompare(second.title ?? "") == .orderedAscending
+            }
+            return !firstComplete && secondComplete
+        }
+    }
     
     private var permissionStatusText: String {
         switch notificationManager.permissionStatus {
@@ -442,13 +506,35 @@ struct SettingsView: View {
             UIApplication.shared.open(settingsUrl)
         }
     }
+
+    // MARK: - Friendly CSV error mapping
+
+    private func friendlyImportError(_ error: Error) -> String {
+        if let csvError = error as? TaskViewModel.CSVImportError {
+            switch csvError {
+            case .invalidFile:
+                return "The selected file could not be accessed."
+            case .unreadableData:
+                return "The file could not be read (encoding/permissions)."
+            case .malformedHeader:
+                return "The header row is not in a recognized format."
+            case .malformedRow:
+                return "One of the rows is malformed."
+            case .dateParseFailed(let s):
+                return "Date format not recognized: \(s). Expected yyyy-MM-dd, M/d/yy, or M/d/yyyy."
+            }
+        }
+        return error.localizedDescription
+    }
 }
 
 struct AddTaskSheetWithPeriods: View {
     @Binding var newTaskTitle: String
-    let onSave: (Set<Period>) -> Void
+    let onSave: (Set<Period>, TaskCategory, TaskWeight) -> Void
     @Environment(\.presentationMode) var presentationMode
     @State private var selectedPeriods: Set<Period> = [.morning, .evening]
+    @State private var selectedCategory: TaskCategory = .general
+    @State private var selectedWeight: TaskWeight = .low
     
     var body: some View {
         NavigationView {
@@ -486,6 +572,31 @@ struct AddTaskSheetWithPeriods: View {
                     .padding(.vertical, 4)
                 }
                 
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Category")
+                        .font(.headline)
+                    
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(TaskCategory.allCases) { category in
+                            Text(category.displayName).tag(category)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Weight")
+                        .font(.headline)
+                    
+                    Picker("Weight", selection: $selectedWeight) {
+                        ForEach(TaskWeight.allCases) { weight in
+                            Text(weight.displayName).tag(weight)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                }
+                
                 Spacer()
             }
             .padding()
@@ -498,7 +609,7 @@ struct AddTaskSheetWithPeriods: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Add") {
-                        onSave(selectedPeriods)
+                        onSave(selectedPeriods, selectedCategory, selectedWeight)
                     }
                     .disabled(newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedPeriods.isEmpty)
                 }

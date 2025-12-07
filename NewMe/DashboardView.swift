@@ -63,14 +63,14 @@ struct DashboardView: View {
             HStack(spacing: 16) {
                 quickActionButton(
                     title: "Morning",
-                    subtitle: morningCompletionText,
+                    subtitle: completionSummaryText(for: .morning),
                     period: .morning,
                     color: .blue
                 )
                 
                 quickActionButton(
                     title: "Evening",
-                    subtitle: eveningCompletionText,
+                    subtitle: completionSummaryText(for: .evening),
                     period: .evening,
                     color: .purple
                 )
@@ -284,13 +284,19 @@ struct DashboardView: View {
                             
                             Spacer()
                             
-                            Text("\(Int(taskInfo.skipRate * 100))%")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.orange.opacity(0.15))
-                                .foregroundColor(.orange)
-                                .cornerRadius(8)
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Text("\(taskInfo.skippedDays) day\(taskInfo.skippedDays == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.orange.opacity(0.15))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(8)
+                                
+                                Text(taskInfo.task.categoryEnum.displayName)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -304,32 +310,19 @@ struct DashboardView: View {
     
     // MARK: - Helper Functions
     
-    private var morningCompletionText: String {
-        let tasks = viewModel.getTasksForToday(period: .morning)
-        let completed = tasks.filter { $0.completed }.count
-        let total = tasks.count
-        
-        if total == 0 {
-            return "No morning habits"
-        } else if completed == total {
-            return "All done! ✅"
-        } else {
-            return "\(completed) of \(total) completed"
+    private func completionSummaryText(for period: Period) -> String {
+        let today = Calendar.current.startOfDay(for: Date())
+        let tasks = viewModel.activeTasks.filter { $0.isApplicable(for: period) }
+        guard !tasks.isEmpty else {
+            return period == .morning ? "No morning habits" : "No evening habits"
         }
-    }
-    
-    private var eveningCompletionText: String {
-        let tasks = viewModel.getTasksForToday(period: .evening)
-        let completed = tasks.filter { $0.completed }.count
-        let total = tasks.count
         
-        if total == 0 {
-            return "No evening habits"
-        } else if completed == total {
-            return "All done! ✅"
-        } else {
-            return "\(completed) of \(total) completed"
+        let completedUnits = tasks.reduce(0.0) { partial, task in
+            partial + task.completionContribution(for: today, period: period)
         }
+        let average = completedUnits / Double(tasks.count)
+        let percentage = Int(round(average * 100))
+        return "\(String(format: "%.1f", completedUnits)) of \(tasks.count) (\(percentage)%)"
     }
     
     private func progressColor(for rate: Double) -> Color {

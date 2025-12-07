@@ -20,6 +20,9 @@
 		A1B2C3D4E60B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E60A /* SampleData.swift */; };
 		A1B2C3D4E60E /* NewMe.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E60D /* NewMe.xcdatamodeld */; };
 		E21601FC2E8037F9003278CD /* WeightTrackingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E21601FB2E8037F8003278CD /* WeightTrackingView.swift */; };
+		E2A4736F2E8F7B7200AFBF10 /* PlankTrackingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A4736E2E8F7B7200AFBF10 /* PlankTrackingView.swift */; };
+		E2B1537B2E8F7F8F00AAEE0E /* MetricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2B1537A2E8F7F8F00AAEE0E /* MetricsView.swift */; };
+		E2CE99252EC0E5B7002EDD87 /* CalendarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +41,8 @@
 		A1B2C3D4E60C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D4E60D /* NewMe.xcdatamodeld */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodeld; path = NewMe.xcdatamodeld; sourceTree = "<group>"; };
 		E21601FB2E8037F8003278CD /* WeightTrackingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WeightTrackingView.swift; sourceTree = "<group>"; };
+		E2A4736E2E8F7B7200AFBF10 /* PlankTrackingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlankTrackingView.swift; sourceTree = "<group>"; };
+		E2B1537A2E8F7F8F00AAEE0E /* MetricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricsView.swift; sourceTree = "<group>"; };
 		E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -57,7 +62,6 @@
 			children = (
 				A1B2C3D4E5F4 /* NewMe */,
 				A1B2C3D4E5F3 /* Products */,
-				E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -75,10 +79,13 @@
 				A1B2C3D4E5F5 /* HabitTrackerApp.swift */,
 				A1B2C3D4E5F7 /* ContentView.swift */,
 				E21601FB2E8037F8003278CD /* WeightTrackingView.swift */,
+				E2A4736E2E8F7B7200AFBF10 /* PlankTrackingView.swift */,
+				E2B1537A2E8F7F8F00AAEE0E /* MetricsView.swift */,
 				A1B2C3D4E602 /* DashboardView.swift */,
 				A1B2C3D4E604 /* SettingsView.swift */,
 				A1B2C3D4E606 /* ChecklistSheetView.swift */,
 				A1B2C3D4E5FE /* DataModels.swift */,
+				E2CE99242EC0E08A002EDD87 /* CalendarManager.swift */,
 				A1B2C3D4E600 /* TaskViewModel.swift */,
 				A1B2C3D4E608 /* NotificationManager.swift */,
 				A1B2C3D4E60A /* SampleData.swift */,
@@ -170,6 +177,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E2CE99252EC0E5B7002EDD87 /* CalendarManager.swift in Sources */,
+				E2B1537B2E8F7F8F00AAEE0E /* MetricsView.swift in Sources */,
+				E2A4736F2E8F7B7200AFBF10 /* PlankTrackingView.swift in Sources */,
 				A1B2C3D4E5F8 /* ContentView.swift in Sources */,
 				A1B2C3D4E603 /* DashboardView.swift in Sources */,
 				E21601FC2E8037F9003278CD /* WeightTrackingView.swift in Sources */,

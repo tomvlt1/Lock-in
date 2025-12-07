@@ -9,6 +9,7 @@
     <entity name="Completion" representedClassName="Completion" syncable="YES" codeGenerationType="class">
         <attribute name="date" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="period" optional="YES" attributeType="String"/>
+        <attribute name="progressUnits" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="skipped" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
         <relationship name="task" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Task" inverseName="completions" inverseEntity="Task"/>
     </entity>
@@ -25,12 +26,24 @@
             </uniquenessConstraint>
         </uniquenessConstraints>
     </entity>
+    <entity name="PlankEntry" representedClassName="PlankEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="date" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="durationSeconds" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
     <entity name="Task" representedClassName="Task" syncable="YES" codeGenerationType="class">
+        <attribute name="category" optional="YES" attributeType="String" defaultValueString="general"/>
         <attribute name="archived" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
         <attribute name="created" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
         <attribute name="periods" optional="YES" attributeType="String" defaultValueString="morning,evening"/>
         <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="weight" optional="YES" attributeType="String" defaultValueString="low"/>
         <relationship name="completions" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Completion" inverseName="task" inverseEntity="Completion"/>
         <uniquenessConstraints>
             <uniquenessConstraint>

@@ -34,11 +34,11 @@ struct ContentView: View {
                 }
                 .tag(2)
             
-            // Weight Tracking Tab
-            WeightTrackingView()
+            // Metrics Tab (Weight + Plank)
+            MetricsView()
                 .tabItem {
-                    Image(systemName: "scalemass")
-                    Text("Weight")
+                    Image(systemName: "gauge")
+                    Text("Metrics")
                 }
                 .tag(3)
             
@@ -99,9 +99,14 @@ struct TaskManagementView: View {
             }
         }
         .sheet(isPresented: $showingAddTask) {
-            AddTaskViewWithPeriods(newTaskTitle: $newTaskTitle) { periods in
+            AddTaskViewWithPeriods(newTaskTitle: $newTaskTitle) { periods, category, weight in
                 if !newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.addTask(title: newTaskTitle, periods: periods)
+                    viewModel.addTask(
+                        title: newTaskTitle,
+                        periods: periods,
+                        category: category,
+                        weight: weight
+                    )
                     newTaskTitle = ""
                 }
                 showingAddTask = false
@@ -141,9 +146,26 @@ struct TaskManagementView: View {
     
     private var activeTasksSection: some View {
         Section("Active Habits") {
-            ForEach(viewModel.activeTasks, id: \.id) { task in
+            ForEach(sortedActiveTasks, id: \.id) { task in
                 TaskRowView(task: task)
             }
+        }
+    }
+
+    private var sortedActiveTasks: [Task] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return viewModel.activeTasks.sorted { first, second in
+            let firstComplete = first.isFullyCompleted(on: today)
+            let secondComplete = second.isFullyCompleted(on: today)
+            
+            if firstComplete == secondComplete {
+                let firstTitle = first.title ?? ""
+                let secondTitle = second.title ?? ""
+                return firstTitle.localizedCaseInsensitiveCompare(secondTitle) == .orderedAscending
+            }
+            
+            // Incomplete tasks should appear first.
+            return !firstComplete && secondComplete
         }
     }
 }
@@ -165,6 +187,20 @@ struct TaskRowView: View {
                     Text(task.title ?? "Untitled Task")
                         .font(.body)
                         .fontWeight(.medium)
+                    
+                    HStack(spacing: 8) {
+                        Label(task.categoryEnum.displayName, systemImage: "tag")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(task.categoryEnum.color.opacity(0.15))
+                            .foregroundColor(task.categoryEnum.color)
+                            .cornerRadius(6)
+                        
+                        Text("\(task.weightEnum.displayName) weight")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     
                     HStack {
                         Text("Created \(task.created ?? Date(), style: .date)")
@@ -230,9 +266,15 @@ struct TaskRowView: View {
                 taskTitle: $editedTitle,
                 originalTitle: task.title ?? "Untitled Task",
                 task: task
-            ) {
+            ) { periods, category, weight in
                 if !editedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.updateTask(task, title: editedTitle)
+                    viewModel.updateTask(
+                        task,
+                        title: editedTitle,
+                        periods: periods,
+                        category: category,
+                        weight: weight
+                    )
                 }
                 showingEditSheet = false
             }
@@ -250,16 +292,19 @@ struct TaskRowView: View {
     }
     
     private func completionIndicator(period: Period, task: Task) -> some View {
-        let isCompleted = task.isCompleted(for: Date(), period: period)
-        
+        let today = Calendar.current.startOfDay(for: Date())
+        let progress = min(1.0, task.completionContribution(for: today, period: period))
+        let tintColor: Color = progress >= 1.0 ? .green : .blue
+        let percentage = Int(progress * 100)
+
         return HStack(spacing: 4) {
-            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                .font(.caption)
-                .foregroundColor(isCompleted ? .green : .gray)
+            ProgressView(value: progress)
+                .progressViewStyle(CircularProgressViewStyle(tint: tintColor))
+                .frame(width: 18, height: 18)
             
-            Text(period.displayName)
+            Text("\(period.displayName) \(percentage)%")
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(progress >= 1.0 ? .green : .secondary)
         }
     }
     
@@ -279,9 +324,11 @@ struct TaskRowView: View {
 
 struct AddTaskViewWithPeriods: View {
     @Binding var newTaskTitle: String
-    let onSave: (Set<Period>) -> Void
+    let onSave: (Set<Period>, TaskCategory, TaskWeight) -> Void
     @Environment(\.presentationMode) var presentationMode
     @State private var selectedPeriods: Set<Period> = [.morning, .evening]
+    @State private var selectedCategory: TaskCategory = .general
+    @State private var selectedWeight: TaskWeight = .low
     
     var body: some View {
         NavigationView {
@@ -305,7 +352,7 @@ struct AddTaskViewWithPeriods: View {
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .submitLabel(.done)
                         .onSubmit {
-                            onSave(selectedPeriods)
+                            onSave(selectedPeriods, selectedCategory, selectedWeight)
                         }
                 }
                 
@@ -331,6 +378,32 @@ struct AddTaskViewWithPeriods: View {
                     .padding(.vertical, 4)
                 }
                 
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Category")
+                        .font(.headline)
+                    
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(TaskCategory.allCases) { category in
+                            Text(category.displayName).tag(category)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .buttonStyle(BorderlessButtonStyle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Weight (effort required)")
+                        .font(.headline)
+                    
+                    Picker("Weight", selection: $selectedWeight) {
+                        ForEach(TaskWeight.allCases) { weight in
+                            Text(weight.displayName).tag(weight)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                }
+                
                 Spacer()
             }
             .padding()
@@ -344,7 +417,7 @@ struct AddTaskViewWithPeriods: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Add") {
-                        onSave(selectedPeriods)
+                        onSave(selectedPeriods, selectedCategory, selectedWeight)
                     }
                     .disabled(newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedPeriods.isEmpty)
                 }
@@ -405,16 +478,25 @@ struct EditTaskView: View {
     @Binding var taskTitle: String
     let originalTitle: String
     let task: Task
-    let onSave: () -> Void
+    let onSave: (Set<Period>, TaskCategory, TaskWeight) -> Void
     @Environment(\.presentationMode) var presentationMode
     @State private var selectedPeriods: Set<Period>
+    @State private var selectedCategory: TaskCategory
+    @State private var selectedWeight: TaskWeight
 
-    init(taskTitle: Binding<String>, originalTitle: String, task: Task, onSave: @escaping () -> Void) {
+    init(
+        taskTitle: Binding<String>,
+        originalTitle: String,
+        task: Task,
+        onSave: @escaping (Set<Period>, TaskCategory, TaskWeight) -> Void
+    ) {
         self._taskTitle = taskTitle
         self.originalTitle = originalTitle
         self.task = task
         self.onSave = onSave
         self._selectedPeriods = State(initialValue: task.selectedPeriods)
+        self._selectedCategory = State(initialValue: task.categoryEnum)
+        self._selectedWeight = State(initialValue: task.weightEnum)
     }
 
     var body: some View {
@@ -464,6 +546,31 @@ struct EditTaskView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Category")
+                        .font(.headline)
+                    
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(TaskCategory.allCases) { category in
+                            Text(category.displayName).tag(category)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Weight")
+                        .font(.headline)
+                    
+                    Picker("Weight", selection: $selectedWeight) {
+                        ForEach(TaskWeight.allCases) { weight in
+                            Text(weight.displayName).tag(weight)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                }
 
                 Spacer()
             }
@@ -487,8 +594,7 @@ struct EditTaskView: View {
     }
 
     private func saveTask() {
-        task.selectedPeriods = selectedPeriods
-        onSave()
+        onSave(selectedPeriods, selectedCategory, selectedWeight)
     }
 }
 

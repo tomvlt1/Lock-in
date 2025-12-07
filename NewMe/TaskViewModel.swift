@@ -11,6 +11,7 @@ class TaskViewModel: ObservableObject {
     @Published private(set) var tasks: [Task] = []
     @Published private(set) var oneOffTodos: [OneOffTodo] = []
     @Published private(set) var weightEntries: [WeightEntry] = []
+    @Published private(set) var plankEntries: [PlankEntry] = []
     @Published private(set) var settings: AppSettings?
 
     private var isCalendarSyncEnabled: Bool {
@@ -31,6 +32,7 @@ class TaskViewModel: ObservableObject {
         loadTasks()
         loadOneOffTodos()
         loadWeightEntries()
+        loadPlankEntries()
         loadSettings()
     }
     
@@ -62,13 +64,25 @@ class TaskViewModel: ObservableObject {
     
     func loadWeightEntries() {
         let request: NSFetchRequest<WeightEntry> = WeightEntry.fetchRequest()
-        request.sortDescriptors = [NSSortDescriptor(keyPath: \WeightEntry.date, ascending: true)]
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \WeightEntry.date, ascending: false)]
         
         do {
             weightEntries = try context.fetch(request)
         } catch {
             print("Failed to load weight entries: \(error)")
             weightEntries = []
+        }
+    }
+
+    func loadPlankEntries() {
+        let request: NSFetchRequest<PlankEntry> = PlankEntry.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \PlankEntry.date, ascending: false)]
+
+        do {
+            plankEntries = try context.fetch(request)
+        } catch {
+            print("Failed to load plank entries: \(error)")
+            plankEntries = []
         }
     }
     
@@ -105,18 +119,38 @@ class TaskViewModel: ObservableObject {
         loadTasks()
         loadOneOffTodos()
         loadWeightEntries()
+        loadPlankEntries()
     }
     
     // MARK: - Task Management
     
-    func addTask(title: String, periods: Set<Period>) {
-        let task = Task(context: context, title: title, periods: periods)
-        task.archived = false
+    func addTask(
+        title: String,
+        periods: Set<Period>,
+        category: TaskCategory = .general,
+        weight: TaskWeight = .low
+    ) {
+        _ = Task(
+            context: context,
+            title: title,
+            periods: periods,
+            category: category,
+            weight: weight
+        )
         saveContext()
     }
     
-    func updateTask(_ task: Task, title: String) {
+    func updateTask(
+        _ task: Task,
+        title: String,
+        periods: Set<Period>,
+        category: TaskCategory,
+        weight: TaskWeight
+    ) {
         task.title = title
+        task.selectedPeriods = periods
+        task.categoryEnum = category
+        task.weightEnum = weight
         saveContext()
     }
     
@@ -148,16 +182,48 @@ class TaskViewModel: ObservableObject {
     
     // Toggle/mark completion for a specific date/period
     func markTaskCompletion(_ task: Task, for date: Date, period: Period, completed: Bool) {
+        let units = completed ? task.weightEnum.requiredUnits : 0
+        setTaskProgress(task, for: date, period: period, progressUnits: units)
+    }
+    
+    func currentProgress(for task: Task, date: Date, period: Period) -> Int {
         let day = Calendar.current.startOfDay(for: date)
+        return task.completion(for: day, period: period)?.progressUnitsValue ?? 0
+    }
+    
+    func setTaskProgress(_ task: Task, for date: Date, period: Period, progressUnits: Int) {
+        applyProgress(task, for: date, period: period, progressUnits: progressUnits)
+        saveContext()
+    }
+    
+    func bulkSetTaskProgress(
+        for date: Date,
+        period: Period,
+        updates: [(task: Task, progressUnits: Int)]
+    ) {
+        guard !updates.isEmpty else { return }
+        for entry in updates {
+            applyProgress(entry.task, for: date, period: period, progressUnits: entry.progressUnits)
+        }
+        saveContext()
+    }
+    
+    private func applyProgress(_ task: Task, for date: Date, period: Period, progressUnits: Int) {
+        let day = Calendar.current.startOfDay(for: date)
+        let clamped = max(0, min(task.weightEnum.requiredUnits, progressUnits))
         
         if let existing = task.completion(for: day, period: period) {
-            existing.skipped = !completed
+            if clamped == 0 {
+                context.delete(existing)
+            } else {
+                existing.progressUnitsValue = clamped
+            }
         } else {
-            let comp = Completion(context: context, date: day, period: period, skipped: !completed)
-            comp.task = task
+            if clamped > 0 {
+                let comp = Completion(context: context, date: day, period: period, progressUnits: clamped)
+                comp.task = task
+            }
         }
-        
-        saveContext()
     }
     
     // Overwrite all tasks’ completion for a specific date/period based on a set of completed IDs
@@ -167,12 +233,12 @@ class TaskViewModel: ObservableObject {
         
         for task in tasksForPeriod {
             let isCompleted = (task.id != nil) && completedTaskIds.contains(task.id!)
-            if let existing = task.completion(for: day, period: period) {
-                existing.skipped = !isCompleted
-            } else {
-                let comp = Completion(context: context, date: day, period: period, skipped: !isCompleted)
-                comp.task = task
-            }
+            applyProgress(
+                task,
+                for: day,
+                period: period,
+                progressUnits: isCompleted ? task.weightEnum.requiredUnits : 0
+            )
         }
         
         saveContext()
@@ -185,10 +251,12 @@ class TaskViewModel: ObservableObject {
         if let id = todo.id, let due = dueDate {
             NotificationManager.shared.scheduleOneOffReminder(id: id, title: title, date: due)
         }
+        syncCalendarEventIfNeeded(for: todo)
         saveContext()
     }
     
     func updateOneOffTodoDueDate(_ todo: OneOffTodo, to date: Date?) {
+        let previousDueDate = todo.dueDate
         todo.dueDate = date
         if let id = todo.id {
             NotificationManager.shared.cancelOneOffReminder(id: id)
@@ -196,6 +264,17 @@ class TaskViewModel: ObservableObject {
                 NotificationManager.shared.scheduleOneOffReminder(id: id, title: todo.title ?? "Reminder", date: date)
             }
         }
+
+        if let previousDueDate = previousDueDate, previousDueDate != date {
+            removeCalendarEventIfPossible(for: todo, dueDateOverride: previousDueDate)
+        }
+
+        if date == nil {
+            removeCalendarEventIfPossible(for: todo)
+        } else {
+            syncCalendarEventIfNeeded(for: todo)
+        }
+
         saveContext()
     }
     
@@ -213,6 +292,7 @@ class TaskViewModel: ObservableObject {
                 NotificationManager.shared.cancelOneOffReminder(id: id)
             }
         }
+        syncCalendarEventIfNeeded(for: todo)
         saveContext()
     }
     
@@ -225,6 +305,7 @@ class TaskViewModel: ObservableObject {
                 NotificationManager.shared.scheduleOneOffReminder(id: id, title: todo.title ?? "Reminder", date: due)
             }
         }
+        syncCalendarEventIfNeeded(for: todo)
         saveContext()
     }
     
@@ -232,6 +313,7 @@ class TaskViewModel: ObservableObject {
         if let id = todo.id {
             NotificationManager.shared.cancelOneOffReminder(id: id)
         }
+        removeCalendarEventIfPossible(for: todo)
         context.delete(todo)
         saveContext()
     }
@@ -251,28 +333,68 @@ class TaskViewModel: ObservableObject {
     func getWeightEntriesForChart() -> [(date: Date, weight: Double)] {
         weightEntries
             .compactMap { entry in
-                guard let d = entry.date else { return nil }
-                return (date: d, weight: entry.weight)
+                guard let date = entry.date else { return nil }
+                return (date: date, weight: entry.weight)
             }
-            .sorted { $0.date < $1.date }
+            .sorted { $0.date > $1.date } // Most recent first
+    }
+
+    // MARK: - Plank Tracking
+
+    func addPlankEntry(durationSeconds: Double, date: Date = Date()) {
+        let calendar = Calendar.current
+        if let existing = plankEntries.first(where: { entry in
+            guard let entryDate = entry.date else { return false }
+            return calendar.isDate(entryDate, inSameDayAs: date)
+        }) {
+            existing.durationSeconds = durationSeconds
+            existing.date = date
+        } else {
+            _ = PlankEntry(context: context, durationSeconds: durationSeconds, date: date)
+        }
+        saveContext()
+    }
+
+    func deletePlankEntry(_ entry: PlankEntry) {
+        context.delete(entry)
+        saveContext()
+    }
+
+    func getDailyPlankTotals(forLast days: Int = 14) -> [(date: Date, seconds: Double)] {
+        let calendar = Calendar.current
+        var totals: [Date: Double] = [:]
+
+        for entry in plankEntries {
+            guard let date = entry.date else { continue }
+            let day = calendar.startOfDay(for: date)
+            totals[day, default: 0] += entry.durationSeconds
+        }
+
+        var result: [(Date, Double)] = []
+        for offset in stride(from: days - 1, through: 0, by: -1) {
+            if let date = calendar.date(byAdding: .day, value: -offset, to: Date()) {
+                let day = calendar.startOfDay(for: date)
+                let value = totals[day] ?? 0
+                result.append((day, value))
+            }
+        }
+        return result
     }
     
     // MARK: - Analytics
     
     private func calculateDailyCompletionRate(for date: Date) -> Double {
         let day = Calendar.current.startOfDay(for: date)
-        var total = 0
-        var done = 0
+        var totalOpportunities = 0.0
+        var completedUnits = 0.0
         
         for task in activeTasks {
             for period in Period.allCases where task.isApplicable(for: period) {
-                total += 1
-                if task.isCompleted(for: day, period: period) {
-                    done += 1
-                }
+                totalOpportunities += 1
+                completedUnits += task.completionContribution(for: day, period: period)
             }
         }
-        return total > 0 ? Double(done) / Double(total) : 0.0
+        return totalOpportunities > 0 ? completedUnits / totalOpportunities : 0.0
     }
     
     func getCompletionRatesForLast30Days() -> [(date: Date, rate: Double)] {
@@ -288,10 +410,42 @@ class TaskViewModel: ObservableObject {
         return result
     }
     
-    func getMostSkippedTasks() -> [(task: Task, skipRate: Double)] {
+    func getMostSkippedTasks() -> [(task: Task, skippedDays: Int)] {
         return activeTasks
-            .map { ($0, $0.skipRate) }
-            .sorted { $0.1 > $1.1 }
+            .map { task in
+                (task: task, skippedDays: consecutiveSkipDays(for: task))
+            }
+            .filter { $0.skippedDays > 0 }
+            .sorted { $0.skippedDays > $1.skippedDays }
+    }
+    
+    private func consecutiveSkipDays(for task: Task) -> Int {
+        let calendar = Calendar.current
+        var streak = 0
+        var currentDay = calendar.startOfDay(for: Date())
+        let creationDay = calendar.startOfDay(for: task.created ?? Date())
+        
+        while streak < 60 { // Prevent endless loops
+            if calendar.compare(currentDay, to: creationDay, toGranularity: .day) == .orderedAscending {
+                break
+            }
+            
+            if isTaskFullyCompleted(task, on: currentDay) {
+                break
+            } else {
+                streak += 1
+                guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else {
+                    break
+                }
+                currentDay = previousDay
+            }
+        }
+        
+        return streak
+    }
+    
+    private func isTaskFullyCompleted(_ task: Task, on date: Date) -> Bool {
+        task.isFullyCompleted(on: date)
     }
     
     // MARK: - Settings / Notifications / Calendar
@@ -324,6 +478,65 @@ class TaskViewModel: ObservableObject {
         guard let settings = settings else { return }
         settings.calendarSyncEnabled = enabled
         saveContext()
+
+        if enabled {
+            syncAllTodosToCalendar()
+        } else {
+            removeAllTodoCalendarEvents()
+        }
+    }
+
+    // MARK: - Calendar Sync Helpers
+
+    private func syncCalendarEventIfNeeded(for todo: OneOffTodo) {
+        guard isCalendarSyncEnabled,
+              calendarAccessGranted(),
+              let dueDate = todo.dueDate,
+              let id = todo.id else {
+            return
+        }
+
+        CalendarManager.shared.addOrUpdateTodo(
+            id: id,
+            title: sanitizedTitle(for: todo),
+            dueDate: dueDate,
+            isCompleted: todo.statusEnum == .completed
+        )
+    }
+
+    private func removeCalendarEventIfPossible(for todo: OneOffTodo, dueDateOverride: Date? = nil) {
+        guard calendarAccessGranted(),
+              let id = todo.id,
+              let dueDate = dueDateOverride ?? todo.dueDate else {
+            return
+        }
+
+        CalendarManager.shared.removeTodo(id: id, dueDate: dueDate)
+    }
+
+    private func sanitizedTitle(for todo: OneOffTodo) -> String {
+        let trimmed = (todo.title ?? "Untitled Todo").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Todo" : trimmed
+    }
+
+    private func syncAllTodosToCalendar() {
+        guard isCalendarSyncEnabled, calendarAccessGranted() else { return }
+        loadOneOffTodos()
+        for todo in oneOffTodos where todo.dueDate != nil {
+            syncCalendarEventIfNeeded(for: todo)
+        }
+    }
+
+    private func removeAllTodoCalendarEvents() {
+        guard calendarAccessGranted() else { return }
+        loadOneOffTodos()
+        for todo in oneOffTodos {
+            removeCalendarEventIfPossible(for: todo)
+        }
+    }
+
+    private func calendarAccessGranted() -> Bool {
+        CalendarManager.shared.authorizationStatus == .authorized
     }
     
     // MARK: - CSV Export (existing)
@@ -412,7 +625,7 @@ class TaskViewModel: ObservableObject {
         return 0.0
     }
 
-    // MARK: - CSV Import (now synchronous)
+    // MARK: - CSV Import (tolerant + security scope fallback)
 
     enum CSVImportError: Error {
         case invalidFile
@@ -422,13 +635,44 @@ class TaskViewModel: ObservableObject {
         case dateParseFailed(String)
     }
 
-    // Import your own exported CSV format.
+    // Detect delimiter from header: prefer tab if present, else comma.
+    private func detectDelimiter(in header: String) -> Character {
+        if header.contains("\t") { return "\t" }
+        return ","
+    }
+
+    // Split a row using the detected delimiter and trim whitespace around each cell.
+    private func splitRow(_ row: String, delimiter: Character) -> [String] {
+        // Simple split (no quoted-field handling), then trim spaces/tabs
+        return row.split(separator: delimiter, omittingEmptySubsequences: false).map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    // Parse date using multiple formats
+    private func parseDate(_ s: String) -> Date? {
+        let fmts = ["yyyy-MM-dd", "M/d/yy", "M/d/yyyy"]
+        let posix = Locale(identifier: "en_US_POSIX")
+        for fmt in fmts {
+            let df = DateFormatter()
+            df.locale = posix
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            df.dateFormat = fmt
+            if let d = df.date(from: s) {
+                // Normalize to start of day for consistency
+                return Calendar.current.startOfDay(for: d)
+            }
+        }
+        return nil
+    }
+
+    // Import your own exported CSV format, but tolerate tab-delimited files,
+    // flexible dates, and headers with spaces around underscores.
     // Returns a short summary string.
     func importFromCSV(url: URL) throws -> String {
-        guard url.startAccessingSecurityScopedResource() else {
-            throw CSVImportError.invalidFile
-        }
-        defer { url.stopAccessingSecurityScopedResource() }
+        // Try to start security-scoped access; if it fails, continue anyway.
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer { if didStart { url.stopAccessingSecurityScopedResource() } }
 
         let data: Data
         do {
@@ -440,12 +684,18 @@ class TaskViewModel: ObservableObject {
             throw CSVImportError.unreadableData
         }
 
+        // Split into lines
         let lines = text.split(whereSeparator: \.isNewline).map(String.init)
         guard lines.count > 1 else {
             throw CSVImportError.malformedHeader
         }
 
-        let header = splitCSVRow(lines[0])
+        // Detect delimiter from header line
+        let headerLine = lines[0]
+        let delimiter = detectDelimiter(in: headerLine)
+
+        // Parse header cells
+        let header = splitRow(headerLine, delimiter: delimiter)
         guard header.count >= 2 else {
             throw CSVImportError.malformedHeader
         }
@@ -453,6 +703,7 @@ class TaskViewModel: ObservableObject {
             throw CSVImportError.malformedHeader
         }
 
+        // Find indices of special columns (last occurrence)
         let weightIndex = header.lastIndex(where: { $0 == "Weight" })
         let overallIndex = header.lastIndex(where: { $0 == "Overall_Completion_%" })
 
@@ -461,15 +712,20 @@ class TaskViewModel: ObservableObject {
             weightIndex ?? header.count
         )
 
+        // Parse task columns: normalize "Title _Morning" -> ("Title", .morning)
         var taskPeriods: [String: Set<Period>] = [:]
         var taskColumnDescriptors: [(title: String, period: Period, index: Int)] = []
 
         if endTaskColumnsIndex > 1 {
             for idx in 1..<endTaskColumnsIndex {
                 let col = header[idx]
-                if let underscore = col.lastIndex(of: "_") {
-                    let titlePart = String(col[..<underscore]).replacingOccurrences(of: ";", with: ",")
-                    let suffix = String(col[col.index(after: underscore)...])
+                // Split on first underscore
+                if let underscore = col.firstIndex(of: "_") {
+                    let rawTitle = String(col[..<underscore])
+                    let rawSuffix = String(col[col.index(after: underscore)...])
+                    let titlePart = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: ";", with: ",") // reverse export escaping
+                    let suffix = rawSuffix.trimmingCharacters(in: .whitespacesAndNewlines)
                     let period: Period?
                     if suffix.caseInsensitiveCompare("Morning") == .orderedSame {
                         period = .morning
@@ -486,6 +742,7 @@ class TaskViewModel: ObservableObject {
             }
         }
 
+        // Ensure tasks exist / update periods
         var titleToTask: [String: Task] = [:]
         for (title, periods) in taskPeriods {
             if let existing = tasks.first(where: { ($0.title ?? "") == title }) {
@@ -497,38 +754,44 @@ class TaskViewModel: ObservableObject {
             }
         }
 
-        let dateFormatter = DateFormatter.csvDateFormatter
         let calendar = Calendar.current
 
         var importedCompletions = 0
         var importedWeights = 0
         var processedDates = 0
 
+        // Process data rows
         for i in 1..<lines.count {
-            let row = splitCSVRow(lines[i])
+            let row = splitRow(lines[i], delimiter: delimiter)
             if row.isEmpty { continue }
+
             let dateString = row[0]
-            guard let date = dateFormatter.date(from: dateString) else {
+            guard let date = parseDate(dateString) else {
                 throw CSVImportError.dateParseFailed(dateString)
             }
             let dayDate = calendar.startOfDay(for: date)
 
+            // Completions
             for desc in taskColumnDescriptors {
                 guard desc.index < row.count else { continue }
                 let value = row[desc.index].trimmingCharacters(in: .whitespacesAndNewlines)
                 guard value == "1" else { continue }
-                if let task = titleToTask[desc.title] {
-                    if !task.isCompleted(for: dayDate, period: desc.period) {
-                        let completion = Completion(context: context, date: dayDate, period: desc.period, skipped: false)
-                        completion.task = task
-                        importedCompletions += 1
-                    }
+                if let task = titleToTask[desc.title], !task.isCompleted(for: dayDate, period: desc.period) {
+                    let completion = Completion(
+                        context: context,
+                        date: dayDate,
+                        period: desc.period,
+                        progressUnits: task.weightEnum.requiredUnits
+                    )
+                    completion.task = task
+                    importedCompletions += 1
                 }
             }
 
+            // Weight
             if let weightIdx = weightIndex, weightIdx < row.count {
                 let w = row[weightIdx].trimmingCharacters(in: .whitespacesAndNewlines)
-                if let weight = Double(w) {
+                if !w.isEmpty, let weight = Double(w) {
                     if let existing = weightEntries.first(where: { entry in
                         guard let d = entry.date else { return false }
                         return calendar.isDate(d, inSameDayAs: dayDate)
@@ -551,10 +814,6 @@ class TaskViewModel: ObservableObject {
 
         return "dates: \(processedDates), completions: \(importedCompletions), weights: \(importedWeights)"
     }
-
-    private func splitCSVRow(_ row: String) -> [String] {
-        row.split(separator: ",", omittingEmptySubsequences: false).map { String($0) }
-    }
 }
 
 // MARK: - DateFormatter helpers
@@ -565,7 +824,6 @@ extension DateFormatter {
         df.dateFormat = "yyyy-MM-dd"
         df.locale = Locale(identifier: "en_US_POSIX")
         df.timeZone = TimeZone(secondsFromGMT: 0)
-        return df
+        return df;
     }()
 }
-
