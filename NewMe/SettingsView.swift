@@ -462,16 +462,26 @@ struct SettingsView: View {
     }
 
     private func createCSVFile() -> URL {
+        print("📁 === CREATE CSV FILE DEBUG ===")
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
         let fileName = "habit-history-\(dateFormatter.string(from: Date())).csv"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         
+        print("📝 csvContent length: \(csvContent.count) characters")
+        print("📝 csvContent preview (first 200 chars): \(String(csvContent.prefix(200)))")
+        
         // Check if csvContent has only a header line (count newlines: 0 or 1 means empty/header-only)
         let lineCount = csvContent.components(separatedBy: "\n").filter { !$0.isEmpty }.count
         let hasData = lineCount > 1
         
+        print("📊 Line count: \(lineCount)")
+        print("✅ Has data: \(hasData)")
+        
         let contentToWrite = hasData ? csvContent : "Date,Task,Period,Completed,Weight\nNo data available,,,,\n"
+        print("📄 Content to write length: \(contentToWrite.count) characters")
+        print("📁 === END CREATE CSV FILE DEBUG ===\n")
+        
         try? contentToWrite.write(to: tempURL, atomically: true, encoding: .utf8)
         return tempURL
     }

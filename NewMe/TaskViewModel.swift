@@ -541,29 +541,62 @@ class TaskViewModel: ObservableObject {
     
     // MARK: - CSV Export (existing)
     func exportTaskHistoryToCSV() -> String {
+        print("📊 === CSV EXPORT DEBUG START ===")
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
         let calendar = Calendar.current
 
-        let allTasks = tasks
-        print("📊 CSV Export Debug:")
-        print("  - Total tasks: \(allTasks.count)")
-        print("  - Active tasks: \(activeTasks.count)")
-        print("  - Archived tasks: \(archivedTasks.count)")
+        // Fetch ALL tasks directly from Core Data (not from cached array)
+        let tasksFetchRequest: NSFetchRequest<Task> = Task.fetchRequest()
+        tasksFetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \Task.title, ascending: true)]
+        
+        let allTasks: [Task]
+        do {
+            allTasks = try context.fetch(tasksFetchRequest)
+            print("✅ Fetched \(allTasks.count) tasks from Core Data")
+            for task in allTasks {
+                print("  - Task: '\(task.title ?? "Untitled")' | Archived: \(task.archived) | Periods: \(task.selectedPeriods)")
+            }
+        } catch {
+            print("❌ Error fetching tasks for CSV export: \(error)")
+            return ""
+        }
+        
+        // If no tasks at all, return empty string to trigger "no data" message
+        guard !allTasks.isEmpty else {
+            print("⚠️ No tasks found - returning empty string")
+            return ""
+        }
         
         var allDates = Set<Date>()
 
-        for task in allTasks {
-            let completions = task.completionsArray
-            print("  - Task '\(task.title ?? "Untitled")' has \(completions.count) completions")
-            for completion in completions {
+        // Collect all dates from task completions - fetch directly from Core Data
+        let completionsFetchRequest: NSFetchRequest<Completion> = Completion.fetchRequest()
+        do {
+            let allCompletions = try context.fetch(completionsFetchRequest)
+            print("✅ Fetched \(allCompletions.count) completions from Core Data")
+            
+            var completionsByTask: [String: Int] = [:]
+            for completion in allCompletions {
                 if let date = completion.date {
                     let dayDate = calendar.startOfDay(for: date)
                     allDates.insert(dayDate)
                 }
+                
+                let taskName = completion.task?.title ?? "Unknown"
+                completionsByTask[taskName, default: 0] += 1
             }
+            
+            print("  Completions by task:")
+            for (taskName, count) in completionsByTask.sorted(by: { $0.key < $1.key }) {
+                print("    - \(taskName): \(count) completions")
+            }
+        } catch {
+            print("❌ Error fetching completions for CSV export: \(error)")
         }
 
+        // Add dates from weight entries
+        print("📏 Weight entries: \(weightEntries.count)")
         for weightEntry in weightEntries {
             if let date = weightEntry.date {
                 let dayDate = calendar.startOfDay(for: date)
@@ -571,17 +604,22 @@ class TaskViewModel: ObservableObject {
             }
         }
 
-        for i in 0..<30 {
+        // Also include last 90 days to show empty days too
+        for i in 0..<90 {
             if let date = calendar.date(byAdding: .day, value: -i, to: Date()) {
                 allDates.insert(calendar.startOfDay(for: date))
             }
         }
 
         let sortedDates = allDates.sorted()
-        print("  - Total unique dates: \(sortedDates.count)")
+        print("📅 Total unique dates: \(sortedDates.count)")
+        if let firstDate = sortedDates.first, let lastDate = sortedDates.last {
+            print("   Date range: \(dateFormatter.string(from: firstDate)) to \(dateFormatter.string(from: lastDate))")
+        }
 
+        // Build header row
         var headerColumns = ["Date"]
-        for task in allTasks.sorted(by: { ($0.title ?? "") < ($1.title ?? "") }) {
+        for task in allTasks {
             for period in Period.allCases {
                 if task.isApplicable(for: period) {
                     let taskTitle = (task.title ?? "Untitled").replacingOccurrences(of: ",", with: ";")
@@ -592,15 +630,15 @@ class TaskViewModel: ObservableObject {
         headerColumns.append("Overall_Completion_%")
         headerColumns.append("Weight")
         
-        print("  - Header columns: \(headerColumns.count)")
-        print("  - Headers: \(headerColumns.joined(separator: ", "))")
+        print("📋 Header columns (\(headerColumns.count)): \(headerColumns.joined(separator: ", "))")
 
         var csvContent = headerColumns.joined(separator: ",") + "\n"
 
+        // Build data rows
         for date in sortedDates {
             var rowData = [DateFormatter.csvDateFormatter.string(from: date)]
 
-            for task in allTasks.sorted(by: { ($0.title ?? "") < ($1.title ?? "") }) {
+            for task in allTasks {
                 for period in Period.allCases {
                     if task.isApplicable(for: period) {
                         let isCompleted = task.isCompleted(for: date, period: period)
@@ -619,8 +657,10 @@ class TaskViewModel: ObservableObject {
             csvContent += rowData.joined(separator: ",") + "\n"
         }
         
-        print("  - CSV size: \(csvContent.count) characters")
-        print("  - CSV preview: \(csvContent.prefix(200))")
+        print("✅ Generated CSV with \(csvContent.count) characters")
+        print("📄 First 300 characters:")
+        print(String(csvContent.prefix(300)))
+        print("📊 === CSV EXPORT DEBUG END ===\n")
 
         return csvContent
     }
