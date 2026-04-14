@@ -1,6 +1,6 @@
 # Lock-in
 
-A little iOS habit tracker I built for myself. I wanted to actually get my shit together and keep my habits honest — and I wanted the app to bend to how I work, not the other way around. Nothing syncs, nothing's in the cloud. It just sits on my phone and nags me at the right times.
+I wanted to get my shit together and keep my habits accountable, and the app to be flexible to my needs. Installation via Sideloadly.
 
 ## What it does
 
